@@ -8,9 +8,12 @@ from fastapi import Depends
 
 from app.config import Settings
 from app.core.connection_manager import ConnectionManager
+from app.core.correlation_store import CorrelationStore
 from app.core.latency_simulator import LatencyConfig, LatencySimulator
 from app.core.response_router import ResponseRouter
+from app.core.session_store import InMemorySessionStore, RedisSessionStore
 from app.logging.setup import get_logger
+from app.services.agent_client import AgentClient
 from app.services.a2a_handler import A2AHandler, A2AResponseLoader
 from app.services.message_handler import MessageHandler
 from app.services.response_loader import ResponseLoader
@@ -23,6 +26,9 @@ _a2a_response_loader: A2AResponseLoader | None = None
 _latency_simulator: LatencySimulator | None = None
 _response_router: ResponseRouter | None = None
 _a2a_handler: A2AHandler | None = None
+_session_store: InMemorySessionStore | RedisSessionStore | None = None
+_correlation_store: CorrelationStore | None = None
+_agent_client: AgentClient | None = None
 
 
 @lru_cache
@@ -206,29 +212,84 @@ def get_a2a_handler(
     return _a2a_handler
 
 
+def get_session_store(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> InMemorySessionStore | RedisSessionStore:
+    """
+    Get or create the singleton session store (in-memory or Redis).
+    
+    Backend is chosen via session_persistence_backend. For Redis, URL is built
+    from redis_host, redis_port, redis_db.
+    
+    Args:
+        settings: Application settings (session TTL and Redis config).
+        
+    Returns:
+        Singleton session store instance.
+    """
+    global _session_store
+
+    if _session_store is None:
+        if settings.session_persistence_backend == "redis":
+            redis_url = (
+                f"redis://{settings.redis_host}:{settings.redis_port}/{settings.redis_db}"
+            )
+            _session_store = RedisSessionStore(
+                redis_url=redis_url,
+                idle_ttl_seconds=settings.session_idle_ttl_seconds,
+                max_lifetime_seconds=settings.session_max_lifetime_seconds,
+            )
+        else:
+            _session_store = InMemorySessionStore(
+                idle_ttl_seconds=settings.session_idle_ttl_seconds,
+                max_lifetime_seconds=settings.session_max_lifetime_seconds,
+            )
+
+    return _session_store
+
+
+def get_correlation_store() -> CorrelationStore:
+    """Get or create the singleton CorrelationStore (in-memory)."""
+    global _correlation_store
+    if _correlation_store is None:
+        _correlation_store = CorrelationStore()
+    return _correlation_store
+
+
+def get_agent_client(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AgentClient | None:
+    """Get or create the singleton AgentClient if agent_base_url is set, else None."""
+    global _agent_client
+    if settings.async_flow_enabled and settings.agent_base_url:
+        if _agent_client is None:
+            _agent_client = AgentClient(agent_base_url=settings.agent_base_url)
+        return _agent_client
+    return None
+
+
 def get_message_handler(
     response_router: Annotated[ResponseRouter, Depends(get_response_router)],
     a2a_handler: Annotated[A2AHandler, Depends(get_a2a_handler)],
+    session_store: Annotated[
+        InMemorySessionStore | RedisSessionStore, Depends(get_session_store)
+    ],
     logger: Annotated[structlog.BoundLogger, Depends(get_logger_dependency)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    correlation_store: Annotated[CorrelationStore, Depends(get_correlation_store)],
+    agent_client: Annotated[AgentClient | None, Depends(get_agent_client)],
 ) -> MessageHandler:
     """
     Create a MessageHandler instance.
-    
-    MessageHandler is created per-request to allow for request-scoped
-    logging context.
-    
-    Args:
-        response_router: Response router instance.
-        a2a_handler: A2A handler instance for plain text queries.
-        logger: Bound logger instance.
-        
-    Returns:
-        New MessageHandler instance.
     """
     return MessageHandler(
         router=response_router,
         a2a_handler=a2a_handler,
+        session_store=session_store,
         logger=logger,
+        settings=settings,
+        correlation_store=correlation_store,
+        agent_client=agent_client,
     )
 
 
@@ -241,24 +302,29 @@ A2AResponseLoaderDep = Annotated[A2AResponseLoader, Depends(get_a2a_response_loa
 LatencySimulatorDep = Annotated[LatencySimulator, Depends(get_latency_simulator)]
 ResponseRouterDep = Annotated[ResponseRouter, Depends(get_response_router)]
 A2AHandlerDep = Annotated[A2AHandler, Depends(get_a2a_handler)]
+SessionStoreDep = Annotated[
+    InMemorySessionStore | RedisSessionStore, Depends(get_session_store)
+]
 MessageHandlerDep = Annotated[MessageHandler, Depends(get_message_handler)]
 
 
 def reset_singletons() -> None:
     """
     Reset all singleton instances.
-    
     Useful for testing to ensure a clean state between tests.
     """
     global _connection_manager, _response_loader, _a2a_response_loader
-    global _latency_simulator, _response_router, _a2a_handler
-    
+    global _latency_simulator, _response_router, _a2a_handler, _session_store
+    global _correlation_store, _agent_client
+
     _connection_manager = None
     _response_loader = None
     _a2a_response_loader = None
     _latency_simulator = None
     _response_router = None
     _a2a_handler = None
-    
-    # Clear the settings cache
+    _session_store = None
+    _correlation_store = None
+    _agent_client = None
+
     get_settings.cache_clear()

@@ -35,7 +35,7 @@ def client(app):
 
 @pytest.fixture
 def sample_user_query_message() -> dict:
-    """Sample user query message."""
+    """Sample user query message (no session_id so server creates one)."""
     return {
         "type": "user_query",
         "payload": {
@@ -43,7 +43,6 @@ def sample_user_query_message() -> dict:
             "language": "en",
         },
         "metadata": {
-            "session_id": "test-session-123",
             "correlation_id": "corr-456",
         },
     }
@@ -51,36 +50,32 @@ def sample_user_query_message() -> dict:
 
 @pytest.fixture
 def sample_ping_message() -> dict:
-    """Sample ping message."""
+    """Sample ping message (no session_id so server creates one)."""
     return {
         "type": "ping",
         "payload": {
             "client_timestamp": "2024-01-15T10:30:00Z",
         },
-        "metadata": {
-            "session_id": "test-session-123",
-        },
+        "metadata": {},
     }
 
 
 @pytest.fixture
 def sample_get_history_message() -> dict:
-    """Sample get history message."""
+    """Sample get history message (no session_id so server creates one)."""
     return {
         "type": "get_history",
         "payload": {
             "limit": 10,
             "offset": 0,
         },
-        "metadata": {
-            "session_id": "test-session-123",
-        },
+        "metadata": {},
     }
 
 
 @pytest.fixture
 def sample_orchestrate_message() -> dict:
-    """Sample orchestrate message."""
+    """Sample orchestrate message (no session_id so server creates one)."""
     return {
         "type": "orchestrate",
         "payload": {
@@ -88,23 +83,19 @@ def sample_orchestrate_message() -> dict:
             "parameters": {"query": "product info"},
             "agents": ["findability_agent"],
         },
-        "metadata": {
-            "session_id": "test-session-123",
-        },
+        "metadata": {},
     }
 
 
 @pytest.fixture
 def sample_subscribe_message() -> dict:
-    """Sample subscribe message."""
+    """Sample subscribe message (no session_id so server creates one)."""
     return {
         "type": "subscribe",
         "payload": {
             "topics": ["notifications", "updates"],
         },
-        "metadata": {
-            "session_id": "test-session-123",
-        },
+        "metadata": {},
     }
 
 
@@ -114,7 +105,5 @@ def sample_invalid_message() -> dict:
     return {
         "type": "unknown_type",
         "payload": {},
-        "metadata": {
-            "session_id": "test-session-123",
-        },
+        "metadata": {},
     }

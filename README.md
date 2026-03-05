@@ -34,10 +34,10 @@ A mock WebSocket server for the CIRCUIT User Assistant Service, designed for tes
 4. **Test the connection**:
    ```bash
    # Using websocat (install: brew install websocat)
-   websocat ws://localhost:8000/ws
+   websocat ws://localhost:8000/ciscoua/api/v1/ws
    
    # Or using wscat (install: npm install -g wscat)
-   wscat -c ws://localhost:8000/ws
+   wscat -c ws://localhost:8000/ciscoua/api/v1/ws
    ```
 
 ### Docker
@@ -200,7 +200,7 @@ wscat -c ws://localhost:8000/ws -x 'hello there'
   "result": {
     "kind": "task",
     "id": "task_5f8d2a1b-c3e4-4f6a-8b9c-0d1e2f3a4b5c",
-    "contextId": "ctx_9a8b7c6d-5e4f-3a2b-1c0d-9e8f7a6b5c4d",
+    "contextId": "9a8b7c6d-5e4f-3a2b-1c0d-9e8f7a6b5c4d",
     "status": {
       "state": "completed",
       "message": null,

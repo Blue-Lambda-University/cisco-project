@@ -16,11 +16,10 @@ class MessageMetadata(BaseModel):
     and correlation of requests with responses.
     """
 
-    session_id: str = Field(
-        ...,
-        min_length=1,
+    session_id: str | None = Field(
+        default=None,
         max_length=256,
-        description="Client session identifier"
+        description="Client session identifier (omit or null for new session)"
     )
     correlation_id: str | None = Field(
         default=None,

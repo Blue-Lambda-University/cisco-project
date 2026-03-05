@@ -53,7 +53,13 @@ data:
   MOCK_WS_LATENCY_SPIKE_MAX_MS: "2000"
 
   # WebSocket subprotocols (JSON array)
-  MOCK_WS_SUPPORTED_SUBPROTOCOLS: '["circuit.v1", "circuit.v2"]'
+  MOCK_WS_SUPPORTED_SUBPROTOCOLS: '["circuit.v1", "circuit.v2", "cdca2a"]'
+
+  # Redis session persistence (optional: set SESSION_PERSISTENCE_BACKEND to "redis" to enable)
+  MOCK_WS_REDIS_HOST: "10.68.81.4"
+  MOCK_WS_REDIS_PORT: "6397"
+  MOCK_WS_REDIS_DB: "0"
+  MOCK_WS_SESSION_PERSISTENCE_BACKEND: "memory"
 ---
 apiVersion: apps/v1
 kind: Deployment

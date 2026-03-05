@@ -1,6 +1,5 @@
 """WebSocket endpoint for the mock server."""
 
-import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.connection_manager import ConnectionManager
@@ -9,13 +8,14 @@ from app.dependencies.providers import (
     MessageHandlerDep,
     SettingsDep,
 )
-from app.logging.setup import bind_connection_context, clear_context
+from app.logging.setup import bind_connection_context, clear_context, get_logger
 from app.models.enums import ErrorCode
+from app.models.responses import AsyncAcceptedResponse
 from app.services.message_handler import MessageHandler
 
 router = APIRouter(tags=["websocket"])
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 
 async def negotiate_subprotocol(
@@ -103,23 +103,26 @@ async def handle_connection(
                 subprotocol=subprotocol,
             )
             
-            # Send response - both OutgoingResponse and A2AResponse are Pydantic models
-            response_json = response.model_dump_json(by_alias=True)
-            
-            # Log based on response type
-            if hasattr(response, 'jsonrpc'):
-                # A2A response
-                connection_logger.debug(
-                    "a2a_response_sent",
-                    response_type="a2a",
-                )
+            # Send response
+            if isinstance(response, AsyncAcceptedResponse):
+                response_json = response.to_a2a_in_progress_json()
+                connection_logger.debug("a2a_response_sent", response_type="async_accepted")
             else:
-                # Standard OutgoingResponse
-                connection_logger.debug(
-                    "response_sent",
-                    response_type=response.type,
-                    latency_ms=response.metadata.latency_ms,
-                )
+                response_json = response.model_dump_json(by_alias=True)
+
+            # Log based on response type (for non-AsyncAccepted)
+            if not isinstance(response, AsyncAcceptedResponse):
+                if hasattr(response, "jsonrpc"):
+                    if hasattr(response, "error"):
+                        connection_logger.debug("a2a_response_sent", response_type="a2a_error")
+                    else:
+                        connection_logger.debug("a2a_response_sent", response_type="a2a")
+                else:
+                    connection_logger.debug(
+                        "response_sent",
+                        response_type=response.type,
+                        latency_ms=response.metadata.latency_ms,
+                    )
             
             await websocket.send_text(response_json)
             
@@ -165,7 +168,7 @@ async def websocket_endpoint(
     - Message handling loop
     - Graceful disconnection
     """
-    ws_logger = logger.bind(endpoint="/ws")
+    ws_logger = logger.bind(endpoint="/ciscoua/api/v1/ws")
     
     # Check capacity before accepting
     if connection_manager.is_at_capacity():
@@ -216,7 +219,7 @@ async def websocket_endpoint_with_client_id(
     Alternative endpoint that accepts a client identifier in the URL.
     Useful for debugging and testing specific client scenarios.
     """
-    ws_logger = logger.bind(endpoint="/ws/{client_id}", client_id=client_id)
+    ws_logger = logger.bind(endpoint="/ciscoua/api/v1/ws/{client_id}", client_id=client_id)
     
     # Check capacity
     if connection_manager.is_at_capacity():

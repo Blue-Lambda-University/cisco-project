@@ -50,6 +50,7 @@ class ErrorCode(str, Enum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
     RATE_LIMITED = "RATE_LIMITED"
     CONNECTION_LIMIT_EXCEEDED = "CONNECTION_LIMIT_EXCEEDED"
+    SESSION_EXPIRED = "SESSION_EXPIRED"
 
 
 class WebSocketSubprotocol(str, Enum):
@@ -62,3 +63,4 @@ class WebSocketSubprotocol(str, Enum):
 
     CIRCUIT_V1 = "circuit.v1"
     CIRCUIT_V2 = "circuit.v2"
+    CDCA2A = "cdca2a"

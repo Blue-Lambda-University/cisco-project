@@ -5,10 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-import structlog
 from fastapi import WebSocket
 
-logger = structlog.get_logger()
+from app.logging.setup import get_logger
+
+logger = get_logger()
 
 
 @dataclass
@@ -183,6 +184,27 @@ class ConnectionManager:
             conn for conn in self._connections.values()
             if topic in conn.subscriptions
         ]
+
+    async def send_to_connection(self, connection_id: str, text: str) -> bool:
+        """
+        Send a text message to a specific connection by ID.
+        Used by the webhook handler to push the orchestrator response to the right client.
+        Returns True if sent, False if connection not found or send failed.
+        """
+        conn = self._connections.get(connection_id)
+        if conn is None:
+            self._logger.debug("send_to_connection_not_found", connection_id=connection_id)
+            return False
+        try:
+            await conn.websocket.send_text(text)
+            return True
+        except Exception as e:
+            self._logger.warning(
+                "send_to_connection_failed",
+                connection_id=connection_id,
+                error=str(e),
+            )
+            return False
 
     async def broadcast(self, message: str, topic: str | None = None) -> int:
         """

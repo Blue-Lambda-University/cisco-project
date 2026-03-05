@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-import structlog
+from app.logging.setup import get_logger
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 
 class ResponseLoader:

@@ -3,14 +3,13 @@
 from datetime import datetime
 from typing import Any
 
-import structlog
-
 from app.core.latency_simulator import LatencySimulator
+from app.logging.setup import get_logger
 from app.models.enums import ErrorCode, MessageType, ResponseType
 from app.models.responses import OutgoingResponse, ResponseMetadata
 from app.services.response_loader import ResponseLoader
 
-logger = structlog.get_logger()
+logger = get_logger()
 
 
 class ResponseRouter:
@@ -45,6 +44,7 @@ class ResponseRouter:
         message_type: str,
         payload: dict[str, Any],
         correlation_id: str | None = None,
+        session_id: str | None = None,
     ) -> OutgoingResponse:
         """
         Route an incoming message to its canned response.
@@ -53,6 +53,7 @@ class ResponseRouter:
             message_type: The type of the incoming message.
             payload: The message payload.
             correlation_id: Optional correlation ID for tracing.
+            session_id: Optional session ID to include in response metadata.
             
         Returns:
             The appropriate OutgoingResponse.
@@ -90,11 +91,12 @@ class ResponseRouter:
                 },
             }
 
-        # Build metadata
+        # Build metadata (include session_id so client can store or confirm)
         metadata = ResponseMetadata(
             correlation_id=correlation_id,
             timestamp=datetime.utcnow(),
             latency_ms=latency_ms,
+            session_id=session_id,
         )
 
         response = OutgoingResponse(

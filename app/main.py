@@ -3,22 +3,21 @@
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-import structlog
 from fastapi import FastAPI
 
-from app.api import health_router, websocket_router
+from app.api import health_router, webhook_router, websocket_router
 from app.config import Settings
-from app.logging.setup import setup_logging
+from app.logging.setup import get_logger, setup_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Application lifespan manager.
-    
+
     Handles startup and shutdown events for the application.
     """
-    logger = structlog.get_logger()
+    logger = get_logger()
     
     # Startup
     logger.info(
@@ -66,7 +65,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     
     # Include routers
     app.include_router(health_router)
-    app.include_router(websocket_router)
+    app.include_router(websocket_router, prefix="/ciscoua/api/v1")
+    app.include_router(webhook_router, prefix="/ciscoua/api/v1")
     
     return app
 

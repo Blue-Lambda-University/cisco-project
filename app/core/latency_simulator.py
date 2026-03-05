@@ -4,10 +4,11 @@ import asyncio
 import random
 from typing import Any
 
-import structlog
 from pydantic import BaseModel, Field
 
-logger = structlog.get_logger()
+from app.logging.setup import get_logger
+
+logger = get_logger()
 
 
 class LatencyConfig(BaseModel):

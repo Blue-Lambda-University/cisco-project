@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         description="Maximum concurrent WebSocket connections"
     )
     supported_subprotocols: list[str] = Field(
-        default=["circuit.v1", "circuit.v2"],
+        default=["circuit.v1", "circuit.v2", "cdca2a"],
         description="Supported WebSocket subprotocols"
     )
 
@@ -73,6 +73,57 @@ class Settings(BaseSettings):
     a2a_responses_path: str = Field(
         default="app/responses/a2a_responses.json",
         description="Path to A2A canned responses JSON file for plain text queries"
+    )
+
+    # Session configuration (sliding-window TTL)
+    session_idle_ttl_seconds: int = Field(
+        default=1800,
+        ge=60,
+        description="Session idle TTL in seconds (e.g. 30 min). Extended on each request."
+    )
+    session_max_lifetime_seconds: int | None = Field(
+        default=86400,
+        ge=60,
+        description="Max session lifetime in seconds (e.g. 8h). None to allow unbounded extension."
+    )
+
+    # Redis configuration (session persistence)
+    redis_host: str = Field(
+        default="localhost",
+        description="Redis host for session persistence",
+    )
+    redis_port: int = Field(
+        default=6379,
+        ge=1,
+        le=65535,
+        description="Redis port",
+    )
+    redis_db: int = Field(
+        default=0,
+        ge=0,
+        description="Redis database number",
+    )
+    session_persistence_backend: Literal["memory", "redis"] = Field(
+        default="memory",
+        description="Session store backend: 'memory' (in-memory) or 'redis' (persist in Redis)",
+    )
+
+    # Async flow (webhook / orchestrator)
+    async_flow_enabled: bool = Field(
+        default=False,
+        description="When True, forward A2A requests to orchestrator and respond via webhook",
+    )
+    agent_base_url: str | None = Field(
+        default=None,
+        description="Base URL of the orchestrator/agent (e.g. https://agent.example.com)",
+    )
+    webhook_base_url: str = Field(
+        default="",
+        description="Our base URL for webhook callback (e.g. https://our-service.example.com)",
+    )
+    webhook_async_path: str = Field(
+        default="webhooks/async/response",
+        description="Path for async response webhook (appended to webhook_base_url)",
     )
 
     # Logging configuration

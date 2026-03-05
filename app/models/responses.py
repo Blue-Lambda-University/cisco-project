@@ -65,6 +65,41 @@ class A2ATaskStatus(BaseModel):
     )
 
 
+class A2AResultMetadata(BaseModel):
+    """Metadata inside result (requestId, timestamp, sessionId, conversationId, CP_GUTC_Id, referrer)."""
+
+    requestId: str | None = Field(
+        default=None,
+        alias="requestId",
+        description="Request id echoed from the client",
+    )
+    timestamp: str | None = Field(
+        default=None,
+        description="ISO 8601 timestamp when the response was generated",
+    )
+    sessionId: str | None = Field(
+        default=None,
+        alias="sessionId",
+        description="Session ID for the client to store and send on subsequent requests",
+    )
+    conversationId: str | None = Field(
+        default=None,
+        alias="conversationId",
+        description="Conversation/context ID for follow-up turns (same as result.contextId)",
+    )
+    cp_gutc_id: str | None = Field(
+        default=None,
+        alias="CP_GUTC_Id",
+        description="CP GUTC Id from UI (echoed back from webhook/orchestrator)",
+    )
+    referrer: str | None = Field(
+        default=None,
+        description="Referrer from UI (echoed back from webhook/orchestrator)",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class A2ATaskResult(BaseModel):
     """The result object within an A2A JSON-RPC response."""
 
@@ -76,10 +111,10 @@ class A2ATaskResult(BaseModel):
         ...,
         description="Unique identifier for this task"
     )
-    contextId: str = Field(
-        ...,
+    contextId: str | None = Field(
+        default=None,
         alias="contextId",
-        description="Context identifier for this task"
+        description="Context/conversation id (echoed from request; server never creates)",
     )
     status: A2ATaskStatus = Field(
         ...,
@@ -89,10 +124,73 @@ class A2ATaskResult(BaseModel):
         default_factory=list,
         description="List of artifacts produced by the task"
     )
+    sessionId: str | None = Field(
+        default=None,
+        alias="sessionId",
+        description="Session ID for the client to store and send on subsequent requests",
+    )
+    role: str = Field(
+        default="assistant",
+        description="Role of the responder (e.g. 'assistant' for agent output)",
+    )
+    metadata: A2AResultMetadata | None = Field(
+        default=None,
+        description="Request/response metadata (requestId, timestamp, sessionId, conversationId)",
+    )
 
     model_config = {
         "populate_by_name": True,
     }
+
+
+class A2AErrorDetail(BaseModel):
+    """JSON-RPC 2.0 error object for A2A."""
+
+    code: int = Field(..., description="Error code (e.g. -32602 invalid params, -32000 server/session)")
+    message: str = Field(..., description="Human-readable error message")
+
+
+class A2AErrorResponse(BaseModel):
+    """A2A JSON-RPC 2.0 error response."""
+
+    jsonrpc: Literal["2.0"] = Field(default="2.0", description="JSON-RPC version")
+    error: A2AErrorDetail = Field(..., description="Error details")
+    id: str | int | None = Field(default=None, description="Request id (echoed from request)")
+    request_id: str | int | None = Field(
+        default=None,
+        alias="requestId",
+        description="Request id at top level (echoed from request)",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class AsyncAcceptedResponse(BaseModel):
+    """
+    Returned when the request was forwarded to the orchestrator.
+    The UI receives an in-progress style response; the full result is delivered via webhook.
+    """
+
+    correlation_id: str = Field(..., description="Id used to correlate the webhook response")
+    request_id: str | int | None = Field(default=None, description="Request id to echo in response")
+
+    def to_a2a_in_progress_json(self) -> str:
+        """Serialize as an A2A-style in_progress result for the WebSocket."""
+        import json
+        id_val = self.request_id if self.request_id is not None else self.correlation_id
+        payload = {
+            "jsonrpc": "2.0",
+            "id": str(id_val),
+            "requestId": str(id_val) if self.request_id is not None else None,
+            "result": {
+                "kind": "task",
+                "id": self.correlation_id,
+                "status": {"state": "in_progress", "message": "Forwarded to agent; response will follow via webhook."},
+            },
+        }
+        if payload["requestId"] is None:
+            del payload["requestId"]
+        return json.dumps(payload)
 
 
 class A2AResponse(BaseModel):
@@ -107,9 +205,14 @@ class A2AResponse(BaseModel):
         default="2.0",
         description="JSON-RPC protocol version"
     )
-    id: str = Field(
-        ...,
-        description="Request identifier (matches the request id)"
+    id: str | None = Field(
+        default=None,
+        description="Request identifier (echoed from request)",
+    )
+    request_id: str | None = Field(
+        default=None,
+        alias="requestId",
+        description="Request id at top level (echoed from request)",
     )
     result: A2ATaskResult = Field(
         ...,
@@ -146,6 +249,10 @@ class ResponseMetadata(BaseModel):
         default=None,
         ge=0,
         description="Simulated latency in milliseconds"
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="Session ID (included so client can store or confirm)"
     )
 
 

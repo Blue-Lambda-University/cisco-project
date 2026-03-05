@@ -41,10 +41,11 @@ class TestMessageMetadata:
         assert metadata.session_id == "test-session"
         assert metadata.correlation_id is None
 
-    def test_metadata_empty_session_id_fails(self):
-        """Test that empty session_id fails validation."""
-        with pytest.raises(ValidationError):
-            MessageMetadata(session_id="")
+    def test_metadata_session_id_optional(self):
+        """Test that session_id can be None for new session."""
+        metadata = MessageMetadata(session_id=None)
+        assert metadata.session_id is None
+        assert metadata.correlation_id is None
 
 
 class TestUserQueryPayload:

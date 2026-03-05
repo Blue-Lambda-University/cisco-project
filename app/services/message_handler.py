@@ -1,15 +1,32 @@
 """Handles incoming WebSocket messages with validation and routing."""
 
 import json
+import uuid
 from typing import Any
 
 import structlog
 from pydantic import ValidationError
 
+from app.config import Settings
+from app.core.correlation_store import CorrelationStore
 from app.core.response_router import ResponseRouter
+from app.core.session_store import InMemorySessionStore, RedisSessionStore
+from app.logging.setup import bind_message_context
+from app.models.a2a_requests import (
+    A2ASendMessageRequest,
+    extract_a2a_ids_and_query,
+    parse_a2a_request,
+)
 from app.models.enums import ErrorCode, MessageType
 from app.models.messages import PAYLOAD_MODELS, IncomingMessage
-from app.models.responses import A2AResponse, OutgoingResponse
+from app.models.responses import (
+    A2AErrorDetail,
+    A2AErrorResponse,
+    AsyncAcceptedResponse,
+    A2AResponse,
+    OutgoingResponse,
+)
+from app.services.agent_client import AgentClient
 from app.services.a2a_handler import A2AHandler
 
 
@@ -29,21 +46,25 @@ class MessageHandler:
         self,
         router: ResponseRouter,
         a2a_handler: A2AHandler,
+        session_store: InMemorySessionStore | RedisSessionStore,
         logger: structlog.BoundLogger,
+        settings: Settings | None = None,
+        correlation_store: CorrelationStore | None = None,
+        agent_client: AgentClient | None = None,
     ) -> None:
-        """
-        Initialize the message handler.
-        
-        Args:
-            router: Response router for generating responses.
-            a2a_handler: A2A handler for plain text queries.
-            logger: Bound logger instance.
-        """
         self._router = router
         self._a2a_handler = a2a_handler
+        self._session_store = session_store
         self._logger = logger.bind(component="message_handler")
+        self._settings = settings
+        self._correlation_store = correlation_store
+        self._agent_client = agent_client
 
-    async def handle(self, raw_message: str) -> OutgoingResponse | A2AResponse:
+    async def handle(
+        self,
+        raw_message: str,
+        connection_id: str | None = None,
+    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """
         Handle a raw WebSocket message.
         
@@ -66,7 +87,12 @@ class MessageHandler:
             )
             return await self._a2a_handler.handle(raw_message)
 
-        # Validate message structure
+        # A2A JSON-RPC (agent/sendMessage): handle before legacy IncomingMessage
+        a2a_request = parse_a2a_request(data)
+        if a2a_request is not None:
+            return await self._handle_a2a_request(a2a_request, connection_id=connection_id)
+
+        # Validate message structure (legacy type/payload/metadata)
         try:
             message = IncomingMessage.model_validate(data)
         except ValidationError as e:
@@ -92,16 +118,33 @@ class MessageHandler:
         if validation_result is not None:
             return validation_result
 
+        # Session: get or create, validate, extend TTL (sliding window)
+        session_id = message.metadata.session_id if message.metadata.session_id else None
+        if session_id and session_id.strip():
+            session_id = session_id.strip()
+            if self._session_store.get(session_id) is None:
+                self._logger.info("session_expired_or_unknown", session_id=session_id)
+                return self._router.create_error_response(
+                    code=ErrorCode.SESSION_EXPIRED,
+                    message="Session expired or not found. Start a new session.",
+                    correlation_id=message.metadata.correlation_id,
+                )
+            self._session_store.extend_ttl(session_id)
+        else:
+            session_id = self._session_store.create()
+
         self._logger.info(
             "message_received",
             payload_keys=list(message.payload.keys()),
+            session_id=session_id,
         )
 
-        # Route to response
+        # Route to response (include session_id so client can store or confirm)
         return await self._router.route(
             message_type=message.type,
             payload=message.payload,
             correlation_id=message.metadata.correlation_id,
+            session_id=session_id,
         )
 
     def _validate_payload(
@@ -148,6 +191,134 @@ class MessageHandler:
                 },
             )
 
+    async def _handle_a2a_request(
+        self,
+        a2a_request: A2ASendMessageRequest,
+        connection_id: str | None = None,
+    ) -> A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
+        """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler or forward to orchestrator."""
+        query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer = extract_a2a_ids_and_query(
+            a2a_request
+        )
+        response_id = a2a_request.id if a2a_request.id is not None else None
+
+        if not query_text:
+            bind_message_context(
+                message_type="a2a",
+                correlation_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+            )
+            return A2AErrorResponse(
+                jsonrpc="2.0",
+                error=A2AErrorDetail(
+                    code=-32602,
+                    message="Missing or empty query in params.message.parts",
+                ),
+                id=response_id,
+                request_id=response_id,
+            )
+
+        # Option B: resolve session from conversationId if no sessionId in request
+        if not session_id and conversation_id and hasattr(self._session_store, "get_session_for_conversation"):
+            resolved = self._session_store.get_session_for_conversation(conversation_id)
+            if resolved and self._session_store.get(resolved) is not None:
+                session_id = resolved
+                self._session_store.extend_ttl(session_id)
+                self._logger.debug("session_resolved_from_conversation", conversation_id=conversation_id, session_id=session_id)
+
+        if session_id:
+            if self._session_store.get(session_id) is None:
+                bind_message_context(
+                    message_type="a2a",
+                    correlation_id=str(response_id) if response_id is not None else None,
+                    session_id=session_id,
+                )
+                self._logger.info("session_expired_or_unknown", session_id=session_id)
+                return A2AErrorResponse(
+                    jsonrpc="2.0",
+                    error=A2AErrorDetail(
+                        code=-32000,
+                        message="Session expired or not found. Start a new session.",
+                    ),
+                    id=response_id,
+                    request_id=response_id,
+                )
+            self._session_store.extend_ttl(session_id)
+        else:
+            session_id = self._session_store.create()
+
+        # Store conversation -> session mapping when using Redis (one session, many conversations)
+        if conversation_id and hasattr(self._session_store, "set_conversation_session"):
+            self._session_store.set_conversation_session(conversation_id, session_id)
+
+        # Async flow: forward to orchestrator and return accepted immediately
+        if (
+            self._settings
+            and self._settings.async_flow_enabled
+            and self._settings.agent_base_url
+            and (self._settings.webhook_base_url or "").strip()
+            and connection_id
+            and self._correlation_store is not None
+            and self._agent_client is not None
+        ):
+            correlation_id = str(uuid.uuid4())
+            base = self._settings.webhook_base_url.strip().rstrip("/")
+            path = (self._settings.webhook_async_path or "webhooks/async/response").strip("/")
+            webhook_url = f"{base}/ciscoua/api/v1/{path}?correlationId={correlation_id}"
+            self._correlation_store.set(
+                correlation_id=correlation_id,
+                connection_id=connection_id,
+                request_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+            )
+            message_payload = {
+                "role": "user",
+                "parts": [{"kind": "text", "text": query_text}],
+            }
+            ok = await self._agent_client.send_async(
+                webhook_url=webhook_url,
+                correlation_id=correlation_id,
+                message=message_payload,
+                request_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+            )
+            self._logger.info(
+                "a2a_request_forwarded_async",
+                correlation_id=correlation_id,
+                connection_id=connection_id,
+                agent_accepted=ok,
+            )
+            return AsyncAcceptedResponse(
+                correlation_id=correlation_id,
+                request_id=response_id,
+            )
+
+        bind_message_context(
+            message_type="a2a",
+            correlation_id=str(response_id) if response_id is not None else None,
+            session_id=session_id,
+        )
+        self._logger.info(
+            "a2a_request_handled",
+            query_preview=query_text[:80],
+            session_id=session_id,
+            has_conversation_id=bool(conversation_id),
+        )
+        return await self._a2a_handler.handle_a2a_request(
+            query=query_text,
+            session_id=session_id,
+            request_id=str(request_id) if request_id else None,
+            conversation_id=conversation_id,
+            cp_gutc_id=cp_gutc_id,
+            referrer=referrer,
+        )
+
     def _format_validation_errors(self, error: ValidationError) -> list[dict[str, Any]]:
         """
         Format Pydantic validation errors for response.
@@ -172,17 +343,12 @@ class MessageHandler:
         raw_message: str,
         connection_id: str,
         subprotocol: str | None = None,
-    ) -> OutgoingResponse | A2AResponse:
+    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """
         Handle a message with additional connection context.
-        
-        Args:
-            raw_message: The raw message string.
-            connection_id: The connection ID.
-            subprotocol: The negotiated subprotocol.
-            
+
         Returns:
-            OutgoingResponse for JSON messages, or A2AResponse for plain text queries.
+            OutgoingResponse for legacy JSON; A2AResponse or A2AErrorResponse for A2A.
         """
         # Bind connection context
         self._logger = self._logger.bind(
@@ -190,4 +356,4 @@ class MessageHandler:
             subprotocol=subprotocol,
         )
         
-        return await self.handle(raw_message)
+        return await self.handle(raw_message, connection_id=connection_id)
