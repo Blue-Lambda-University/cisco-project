@@ -1,0 +1,214 @@
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: "hpa-cdcai-microsvc-uber-assistant-frontend-deployment"
+  namespace: ns-qry-aiml-stg-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cdcai-microsvc-uber-assistant-frontend-deployment
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 90
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: "vpa-cdcai-microsvc-uber-assistant-frontend-deployment"
+  namespace: ns-qry-aiml-stg-api
+spec:
+  targetRef:
+    apiVersion: "apps/v1"
+    kind: Deployment
+    name: cdcai-microsvc-uber-assistant-frontend-deployment
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: "cdcai-microsvc-uber-assistant-frontend-deployment"
+      mode: "Off"
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name:  cm-cdcai-microsvc-uber-assistant-frontend-stg
+  namespace: ns-qry-aiml-stg-api
+data:
+  # App / platform
+  LOG_LEVEL: "INFO"
+  GOOGLE_CLOUD_PROJECT: "esearch-sandbox-wsdc"
+
+  # Application settings (MOCK_WS_* used by app/config.py)
+  MOCK_WS_ENVIRONMENT: "production"
+  MOCK_WS_LOG_LEVEL: "INFO"
+  MOCK_WS_MAX_CONNECTIONS: "1000"
+
+  # Latency simulation
+  MOCK_WS_LATENCY_ENABLED: "true"
+  MOCK_WS_LATENCY_MIN_MS: "50"
+  MOCK_WS_LATENCY_MAX_MS: "300"
+  MOCK_WS_LATENCY_SPIKE_PROBABILITY: "0.05"
+  MOCK_WS_LATENCY_SPIKE_MIN_MS: "500"
+  MOCK_WS_LATENCY_SPIKE_MAX_MS: "2000"
+
+  # WebSocket subprotocols (JSON array)
+  MOCK_WS_SUPPORTED_SUBPROTOCOLS: '["circuit.v1", "circuit.v2"]'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "10"
+  creationTimestamp: null
+  generation: 1
+  labels:
+    run: cdcai-microsvc-uber-assistant-frontend-deployment
+    dummy_version: 1.0.0 # this is not used
+    environment: stg
+    resource_owner: esearch-health-alerts
+    repository: cdcai-microsvc-uber-assistant-frontend
+    service_type: aimlsearch
+    parent_application_name: aiml
+    application_name: cdcai-microsvc-uber-assistant-frontend
+    component: deploy
+    client_components: na
+    version: v1 
+    git_version: COMMIT_HASH
+    gcp-region: r1 
+    git_tag: GIT_TAG
+  name: cdcai-microsvc-uber-assistant-frontend-deployment
+  namespace: ns-qry-aiml-stg-api
+  selfLink: /apis/apps/v1/namespaces/stg-aiml-backend/deployments/cdcai-microsvc-uber-assistant-frontend-deployment
+spec:
+  progressDeadlineSeconds: 2147483647
+  replicas: 2
+  revisionHistoryLimit: 2147483647
+  selector:
+    matchLabels:
+      run: cdcai-microsvc-uber-assistant-frontend-deployment
+  strategy:
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 0%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        application-ID: cdcai-microsvc-uber-assistant-frontend
+        env: stage
+        module: aiml
+        owner: team-aiml
+        pipeline: ingest
+        release: one
+        run: cdcai-microsvc-uber-assistant-frontend-deployment
+        stage: beta
+        version: git-todo-1.0.0
+    spec:
+      tolerations:
+        - key: workload-type
+          operator: Equal
+          value: query-platform
+          effect: NoSchedule
+      # Added node affinity
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: failure-domain.beta.kubernetes.io/zone
+                operator: In
+                values:
+                - us-east1-c
+                - us-east1-d
+              - key: node_label
+                operator: In
+                values:
+                - query-platform
+      containers:
+      - env:
+        - name: ENV_NAME
+          value: STAGE
+        - name: GCE_METADATA_TIMEOUT
+          value: "30"
+        - name: APPDYNAMICS_AGENT_APPLICATION_NAME
+          value: "Enterprise-Search-Public-Cloud"
+        - name: APPDYNAMICS_AGENT_TIER_NAME
+          value: "CDC-RAG-API"
+        - name: APPDYNAMICS_CONTROLLER_HOST_NAME
+          value: "cisco1nonprod.saas.appdynamics.com"
+        - name: APPDYNAMICS_CONTROLLER_PORT
+          value: "443"
+        - name: APPDYNAMICS_CONTROLLER_SSL_ENABLED
+          value: "True"
+        - name: APPDYNAMICS_AGENT_ACCOUNT_NAME
+          value: "cisco1nonprod"
+        - name: APPDYNAMICS_AGENT_ACCOUNT_ACCESS_KEY
+          value: "c37ebce0-c8c4-4a19-9983-efd3445424f4"
+        - name: APPDYNAMICS_AGENT_NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        image: gcr.io/gcp-esearchspinnake-prd-50696/gcr-global-platform-cicd-images/microsvc/cdcai/cdcai-microsvc-uber-assistant-frontend
+        imagePullPolicy: IfNotPresent
+        name: cdcai-microsvc-uber-assistant-frontend
+        ports:
+        - containerPort: 8006          
+          protocol: TCP
+          name: readiness-port
+        readinessProbe:
+          failureThreshold: 1
+          httpGet:
+            path: /health
+            port: readiness-port
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 10
+        resources:
+          limits:
+            cpu: 0.3
+            memory: 1G
+          requests:
+            cpu: 0.2
+            memory: 0.8G
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        envFrom:
+        - configMapRef:
+            name: cm-cdcai-microsvc-uber-assistant-frontend-stg
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    cloud.google.com/load-balancer-type: Internal
+  creationTimestamp: null
+  labels:
+    run: cdcai-microsvc-uber-assistant-frontend-deployment
+    version: v1 
+    git_version: COMMIT_HASH
+    gcp-region: r1 
+    git_tag: GIT_TAG
+  name: cdcai-microsvc-uber-assistant-frontend-svc
+  selfLink: /api/v1/namespaces/stg-aiml-backend/services/cdcai-microsvc-uber-assistant-frontend-svc
+  namespace: ns-qry-aiml-stg-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8006
+    name: readiness-port
+    protocol: TCP
+  selector:
+    run: cdcai-microsvc-uber-assistant-frontend-deployment
+  sessionAffinity: None
+  #type: ClusterIP

@@ -1,0 +1,150 @@
+{
+  "version": "1.0.0",
+  "description": "Canned responses for Mock WebSocket Server",
+  "responses": {
+    "user_query": {
+      "type": "assistant_response",
+      "payload": {
+        "message": "I understand you're asking about '{{query_preview}}'. This is a mock response from the CIRCUIT User Assistant. In a production environment, this would be processed by the Orchestrator Agent and return relevant information from the knowledge base.",
+        "confidence": 0.92,
+        "sources": [
+          "knowledge_base",
+          "faq_database",
+          "product_documentation"
+        ],
+        "suggested_actions": [
+          "Ask a follow-up question",
+          "Rate this response",
+          "Connect to live agent",
+          "Browse related topics"
+        ]
+      },
+      "latency_override": {
+        "min_ms": 150,
+        "max_ms": 500
+      }
+    },
+    "ping": {
+      "type": "pong",
+      "payload": {
+        "client_timestamp": "{{client_timestamp}}",
+        "server_timestamp": "{{server_timestamp}}"
+      },
+      "latency_override": {
+        "min_ms": 5,
+        "max_ms": 25
+      }
+    },
+    "get_history": {
+      "type": "history_response",
+      "payload": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Hello, I need help with my account",
+            "timestamp": "{{timestamp_minus_5m}}"
+          },
+          {
+            "role": "assistant",
+            "content": "Hi there! I'd be happy to help you with your account. What specific issue are you experiencing?",
+            "timestamp": "{{timestamp_minus_4m}}"
+          },
+          {
+            "role": "user",
+            "content": "I can't seem to log in anymore",
+            "timestamp": "{{timestamp_minus_3m}}"
+          },
+          {
+            "role": "assistant",
+            "content": "I'm sorry to hear you're having trouble logging in. Let me help you troubleshoot this. Have you tried resetting your password? I can send you a password reset link if needed.",
+            "timestamp": "{{timestamp_minus_2m}}"
+          },
+          {
+            "role": "user",
+            "content": "Yes, please send me a reset link",
+            "timestamp": "{{timestamp_minus_1m}}"
+          },
+          {
+            "role": "assistant",
+            "content": "I've sent a password reset link to your registered email address. Please check your inbox and follow the instructions. The link will expire in 24 hours.",
+            "timestamp": "{{timestamp}}"
+          }
+        ],
+        "total_count": 6,
+        "has_more": false
+      },
+      "latency_override": {
+        "min_ms": 50,
+        "max_ms": 150
+      }
+    },
+    "orchestrate": {
+      "type": "orchestration_result",
+      "payload": {
+        "action": "{{action}}",
+        "status": "completed",
+        "result": {
+          "success": true,
+          "execution_time_ms": 245,
+          "data": {
+            "mock": true,
+            "orchestration_id": "orch_mock_12345",
+            "processed_by": "mock_orchestrator"
+          }
+        },
+        "agents_invoked": [
+          "findability_agent",
+          "licensing_agent",
+          "history_api"
+        ]
+      },
+      "latency_override": {
+        "min_ms": 200,
+        "max_ms": 800
+      }
+    },
+    "subscribe": {
+      "type": "subscription_ack",
+      "payload": {
+        "topics": "{{topics}}",
+        "status": "active",
+        "subscription_id": "sub_mock_{{timestamp}}",
+        "message": "Successfully subscribed to requested topics"
+      },
+      "latency_override": {
+        "min_ms": 20,
+        "max_ms": 50
+      }
+    },
+    "unsubscribe": {
+      "type": "subscription_ack",
+      "payload": {
+        "topics": "{{topics}}",
+        "status": "removed",
+        "message": "Successfully unsubscribed from requested topics"
+      },
+      "latency_override": {
+        "min_ms": 20,
+        "max_ms": 50
+      }
+    },
+    "default": {
+      "type": "error",
+      "payload": {
+        "code": "UNKNOWN_MESSAGE_TYPE",
+        "message": "Message type '{{message_type}}' is not recognized by this mock server",
+        "details": {
+          "supported_types": [
+            "user_query",
+            "ping",
+            "get_history",
+            "orchestrate",
+            "subscribe",
+            "unsubscribe"
+          ],
+          "documentation_url": "https://docs.example.com/websocket-api"
+        }
+      }
+    }
+  }
+}

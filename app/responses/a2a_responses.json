@@ -1,0 +1,181 @@
+{
+  "version": "1.0.0",
+  "description": "A2A (Agent-to-Agent) canned responses for plain text queries",
+  "matching_rules": {
+    "type": "contains",
+    "case_sensitive": false,
+    "priority_order": [
+      "licencing_configuration",
+      "licencing_information",
+      "product_information",
+      "welcome"
+    ]
+  },
+  "responses": {
+    "welcome": {
+      "match_patterns": ["welcome"],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "Welcome to CIRCUIT Assistant. How can I help you today?"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 50,
+        "max_ms": 150
+      }
+    },
+    "licencing_configuration": {
+      "match_patterns": ["licencing configuration", "license configuration", "licensing configuration", "config"],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "Licensing Configuration:\n- License Mode: Smart Licensing\n- Transport: Smart\n- Registration Status: Registered\n- License Server: https://smartreceiver.cisco.com/licservice/license\n- Evaluation Period Remaining: N/A (Registered)\n- Last Renewal Attempt: Success"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 100,
+        "max_ms": 300
+      }
+    },
+    "licencing_information": {
+      "match_patterns": ["licencing information", "license information", "licensing information", "licence info", "license info"],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "License Information:\n- License Type: Network Advantage\n- License Count: 48 ports\n- License Status: In Use\n- Expiration: Perpetual\n- Compliance Status: Authorized\n- Smart Account: cisco-systems-1\n- Virtual Account: DEFAULT"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 100,
+        "max_ms": 300
+      }
+    },
+    "product_information": {
+      "match_patterns": ["product information", "product info", "product"],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "Product Information:\n- Product: Cisco Catalyst 9300 Series\n- Model: C9300-48P\n- Serial Number: FCW2145L0AB\n- Hardware Version: V02\n- Firmware Version: 17.6.3\n- Uptime: 45 days, 12:33:07\n- System Memory: 8GB\n- Flash Memory: 16GB"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 100,
+        "max_ms": 300
+      }
+    },
+    "default": {
+      "match_patterns": [],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "I'm sorry, I didn't understand your query. Please try one of the following:\n- welcome\n- licencing configuration\n- licencing information\n- product information"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 50,
+        "max_ms": 100
+      }
+    }
+  }
+}
