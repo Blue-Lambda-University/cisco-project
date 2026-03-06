@@ -92,6 +92,33 @@ class MessageHandler:
         if a2a_request is not None:
             return await self._handle_a2a_request(a2a_request, connection_id=connection_id)
 
+        # If it looks like JSON-RPC A2A but failed to parse, return A2A error (not legacy)
+        method = data.get("method")
+        params = data.get("params")
+        is_a2a_style = (
+            data.get("jsonrpc") == "2.0"
+            and (method is None or method in ("agent/sendMessage", "SendMessage"))
+            and isinstance(params, dict)
+            and "message" in params
+        )
+        if is_a2a_style:
+            response_id = data.get("id")
+            if response_id is not None:
+                response_id = str(response_id)
+            self._logger.warning(
+                "a2a_request_parse_failed",
+                method=method,
+                has_params=True,
+            )
+            return A2AErrorResponse(
+                jsonrpc="2.0",
+                error=A2AErrorDetail(
+                    code=-32602,
+                    message="Invalid params: expected params.message with role and parts (e.g. parts[].text).",
+                ),
+                id=response_id,
+            )
+
         # Validate message structure (legacy type/payload/metadata)
         try:
             message = IncomingMessage.model_validate(data)
@@ -197,15 +224,15 @@ class MessageHandler:
         connection_id: str | None = None,
     ) -> A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler or forward to orchestrator."""
-        query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer = extract_a2a_ids_and_query(
+        query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat = extract_a2a_ids_and_query(
             a2a_request
         )
-        response_id = a2a_request.id if a2a_request.id is not None else None
+        response_id = str(a2a_request.id) if a2a_request.id is not None else None
 
-        if not query_text:
+        if not query_text and not is_first_chat:
             bind_message_context(
                 message_type="a2a",
-                correlation_id=str(response_id) if response_id is not None else None,
+                correlation_id=response_id,
                 session_id=session_id,
             )
             return A2AErrorResponse(
@@ -215,7 +242,6 @@ class MessageHandler:
                     message="Missing or empty query in params.message.parts",
                 ),
                 id=response_id,
-                request_id=response_id,
             )
 
         # Option B: resolve session from conversationId if no sessionId in request
@@ -241,7 +267,6 @@ class MessageHandler:
                         message="Session expired or not found. Start a new session.",
                     ),
                     id=response_id,
-                    request_id=response_id,
                 )
             self._session_store.extend_ttl(session_id)
         else:
@@ -250,6 +275,22 @@ class MessageHandler:
         # Store conversation -> session mapping when using Redis (one session, many conversations)
         if conversation_id and hasattr(self._session_store, "set_conversation_session"):
             self._session_store.set_conversation_session(conversation_id, session_id)
+
+        # First chat: return welcome message (UI replaces {user_name})
+        if is_first_chat:
+            bind_message_context(
+                message_type="a2a",
+                correlation_id=response_id,
+                session_id=session_id,
+            )
+            self._logger.info("a2a_first_chat_welcome", session_id=session_id)
+            return self._a2a_handler.build_welcome_response(
+                session_id=session_id,
+                request_id=response_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+            )
 
         # Async flow: forward to orchestrator and return accepted immediately
         if (

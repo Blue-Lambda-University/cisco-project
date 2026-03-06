@@ -165,7 +165,7 @@
               "parts": [
                 {
                   "kind": "text",
-                  "text": "I'm sorry, I didn't understand your query. Please try one of the following:\n- welcome\n- licencing configuration\n- licencing information\n- product information"
+                  "text": "I'm Cisco Uber Assistant. I didn't understand that. You can try: welcome, licensing configuration, licensing information, or product information—or ask in your own words."
                 }
               ]
             }

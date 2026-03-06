@@ -1,101 +1,90 @@
-# UI Request and Response Payload Samples
+# UI Request and Response – Sample Payloads
 
-Sample A2A payloads for the WebSocket UI: first turn, follow-up, success response, error response, and async-accepted response. Shown in both **pretty-printed** and **inline** (single-line) format.
-
----
-
-## 1. UI Request – First Turn
-
-### Pretty-printed
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "agent/sendMessage",
-  "requestId": "req-a1b2c3d4",
-  "id": 1,
-  "params": {
-    "message": {
-      "role": "user",
-      "parts": [
-        {
-          "kind": "text",
-          "text": "get cases for test@cisco.com"
-        }
-      ],
-      "messageId": "msg-001"
-    },
-    "metadata": {
-      "email": "test@cisco.com",
-      "requestId": "req-a1b2c3d4",
-      "sessionId": null,
-      "conversationId": "conv-uuid-1111-2222-3333",
-      "CP_GUTC_Id": "gutc-abc123",
-      "referrer": "https://support.example.com"
-    }
-  }
-}
-```
-
-### Inline
-
-```json
-{"jsonrpc":"2.0","method":"agent/sendMessage","requestId":"req-a1b2c3d4","id":1,"params":{"message":{"role":"user","parts":[{"kind":"text","text":"get cases for test@cisco.com"}],"messageId":"msg-001"},"metadata":{"email":"test@cisco.com","requestId":"req-a1b2c3d4","sessionId":null,"conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com"}}}
-```
+Copy-paste samples for the WebSocket UI contract. For full field definitions (required/optional) see **`UI_REQUEST_RESPONSE_SPEC.md`**. Shown in pretty-printed and inline format.
 
 ---
 
-## 2. UI Request – Follow-up
+## 1. Request – First turn
 
-### Pretty-printed
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "agent/sendMessage",
-  "requestId": "req-e5f6g7h8",
-  "id": 2,
-  "params": {
-    "message": {
-      "role": "user",
-      "contextId": "conv-uuid-1111-2222-3333",
-      "parts": [
-        {
-          "kind": "text",
-          "text": "show me the first one"
-        }
-      ],
-      "messageId": "msg-002"
-    },
-    "metadata": {
-      "email": "test@cisco.com",
-      "requestId": "req-e5f6g7h8",
-      "sessionId": "sess-from-first-turn-response",
-      "conversationId": "conv-uuid-1111-2222-3333",
-      "CP_GUTC_Id": "gutc-abc123",
-      "referrer": "https://support.example.com"
-    }
-  }
-}
-```
-
-### Inline
-
-```json
-{"jsonrpc":"2.0","method":"agent/sendMessage","requestId":"req-e5f6g7h8","id":2,"params":{"message":{"role":"user","contextId":"conv-uuid-1111-2222-3333","parts":[{"kind":"text","text":"show me the first one"}],"messageId":"msg-002"},"metadata":{"email":"test@cisco.com","requestId":"req-e5f6g7h8","sessionId":"sess-from-first-turn-response","conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com"}}}
-```
-
----
-
-## 3. UI Response – Success
-
-### Pretty-printed
+**Pretty-printed:**
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "req-a1b2c3d4",
-  "requestId": "req-a1b2c3d4",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [
+        { "kind": "text", "text": "get cases for test@cisco.com" }
+      ],
+      "messageId": "msg-001"
+    },
+    "metadata": {
+      "sessionId": null,
+      "conversationId": "conv-uuid-1111-2222-3333",
+      "CP_GUTC_Id": "gutc-abc123",
+      "referrer": "https://support.example.com",
+      "isFirstChat": true
+    }
+  }
+}
+```
+
+**Inline:**
+
+```json
+{"jsonrpc":"2.0","id":"req-a1b2c3d4","params":{"message":{"role":"user","parts":[{"kind":"text","text":"get cases for test@cisco.com"}],"messageId":"msg-001"},"metadata":{"sessionId":null,"conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com","isFirstChat":true}}}
+```
+
+---
+
+## 2. Request – Follow-up
+
+Use `sessionId` and `conversationId` from the previous response. Send the same `conversationId` in `params.metadata.conversationId` and `params.message.contextId`.
+
+**Pretty-printed:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-e5f6g7h8",
+  "params": {
+    "message": {
+      "role": "user",
+      "contextId": "conv-uuid-1111-2222-3333",
+      "parts": [
+        { "kind": "text", "text": "show me the first one" }
+      ],
+      "messageId": "msg-002"
+    },
+    "metadata": {
+      "sessionId": "39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI",
+      "conversationId": "conv-uuid-1111-2222-3333",
+      "CP_GUTC_Id": "gutc-abc123",
+      "referrer": "https://support.example.com",
+      "isFirstChat": false
+    }
+  }
+}
+```
+
+**Inline:**
+
+```json
+{"jsonrpc":"2.0","id":"req-e5f6g7h8","params":{"message":{"role":"user","contextId":"conv-uuid-1111-2222-3333","parts":[{"kind":"text","text":"show me the first one"}],"messageId":"msg-002"},"metadata":{"sessionId":"39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI","conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com","isFirstChat":false}}}
+```
+
+---
+
+## 3. Response – Success
+
+**Pretty-printed:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-a1b2c3d4",
   "result": {
     "kind": "task",
     "id": "task_xyz-789",
@@ -103,26 +92,21 @@ Sample A2A payloads for the WebSocket UI: first turn, follow-up, success respons
     "status": {
       "state": "completed",
       "message": null,
-      "timestamp": "2025-02-18T12:00:00.000000Z"
+      "timestamp": "2025-02-18T12:00:00.000000+00:00"
     },
     "artifacts": [
       {
-        "artifactId": "art_abc-123",
-        "name": "Response from orchestration",
+        "artifactId": "art-001",
+        "name": "agent_response",
         "parts": [
-          {
-            "kind": "text",
-            "text": "Here are your cases for test@cisco.com..."
-          }
+          { "kind": "text", "text": "Here are your cases for test@cisco.com..." }
         ]
       }
     ],
-    "sessionId": "sess-from-first-turn-response",
     "role": "assistant",
     "metadata": {
-      "requestId": "req-a1b2c3d4",
-      "timestamp": "2025-02-18T12:00:00.000000Z",
-      "sessionId": "sess-from-first-turn-response",
+      "timestamp": "2025-02-18T12:00:00.000000+00:00",
+      "sessionId": "39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI",
       "conversationId": "conv-uuid-1111-2222-3333",
       "CP_GUTC_Id": "gutc-abc123",
       "referrer": "https://support.example.com"
@@ -131,62 +115,83 @@ Sample A2A payloads for the WebSocket UI: first turn, follow-up, success respons
 }
 ```
 
-### Inline
+**Inline:**
 
 ```json
-{"jsonrpc":"2.0","id":"req-a1b2c3d4","requestId":"req-a1b2c3d4","result":{"kind":"task","id":"task_xyz-789","contextId":"conv-uuid-1111-2222-3333","status":{"state":"completed","message":null,"timestamp":"2025-02-18T12:00:00.000000Z"},"artifacts":[{"artifactId":"art_abc-123","name":"Response from orchestration","parts":[{"kind":"text","text":"Here are your cases for test@cisco.com..."}]}],"sessionId":"sess-from-first-turn-response","role":"assistant","metadata":{"requestId":"req-a1b2c3d4","timestamp":"2025-02-18T12:00:00.000000Z","sessionId":"sess-from-first-turn-response","conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com"}}}
+{"jsonrpc":"2.0","id":"req-a1b2c3d4","result":{"kind":"task","id":"task_xyz-789","contextId":"conv-uuid-1111-2222-3333","status":{"state":"completed","message":null,"timestamp":"2025-02-18T12:00:00.000000+00:00"},"artifacts":[{"artifactId":"art-001","name":"agent_response","parts":[{"kind":"text","text":"Here are your cases for test@cisco.com..."}]}],"role":"assistant","metadata":{"timestamp":"2025-02-18T12:00:00.000000+00:00","sessionId":"39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI","conversationId":"conv-uuid-1111-2222-3333","CP_GUTC_Id":"gutc-abc123","referrer":"https://support.example.com"}}}
 ```
 
 ---
 
-## 4. UI Response – Error (e.g. session expired)
+## 4. Response – Error (invalid params)
 
-### Pretty-printed
+**Pretty-printed:**
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "req-a1b2c3d4",
-  "requestId": "req-a1b2c3d4",
   "error": {
-    "code": -32000,
-    "message": "Session expired or not found. Start a new session."
+    "code": -32602,
+    "message": "Invalid params: expected params.message with role and parts (e.g. parts[].text)."
   }
 }
 ```
 
-### Inline
+**Inline:**
 
 ```json
-{"jsonrpc":"2.0","id":"req-a1b2c3d4","requestId":"req-a1b2c3d4","error":{"code":-32000,"message":"Session expired or not found. Start a new session."}}
+{"jsonrpc":"2.0","id":"req-a1b2c3d4","error":{"code":-32602,"message":"Invalid params: expected params.message with role and parts (e.g. parts[].text)."}}
 ```
 
 ---
 
-## 5. UI Response – Async accepted (in progress)
+## 5. Response – Error (session expired)
 
-Returned when the request is forwarded to the orchestrator; full result is delivered later via webhook.
+**Pretty-printed:**
 
-### Pretty-printed
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "req-e5f6g7h8",
+  "error": {
+    "code": -32000,
+    "message": "Session expired or not found."
+  }
+}
+```
+
+**Inline:**
+
+```json
+{"jsonrpc":"2.0","id":"req-e5f6g7h8","error":{"code":-32000,"message":"Session expired or not found."}}
+```
+
+---
+
+## 6. Response – In progress
+
+Backend may send this when the final result will be sent later on the same WebSocket.
+
+**Pretty-printed:**
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "req-a1b2c3d4",
-  "requestId": "req-a1b2c3d4",
   "result": {
     "kind": "task",
-    "id": "correlation-uuid-from-server",
+    "id": "task-pending-abc",
     "status": {
       "state": "in_progress",
-      "message": "Forwarded to agent; response will follow via webhook."
+      "message": "Processing; final result will follow."
     }
   }
 }
 ```
 
-### Inline
+**Inline:**
 
 ```json
-{"jsonrpc":"2.0","id":"req-a1b2c3d4","requestId":"req-a1b2c3d4","result":{"kind":"task","id":"correlation-uuid-from-server","status":{"state":"in_progress","message":"Forwarded to agent; response will follow via webhook."}}}
+{"jsonrpc":"2.0","id":"req-a1b2c3d4","result":{"kind":"task","id":"task-pending-abc","status":{"state":"in_progress","message":"Processing; final result will follow."}}}
 ```

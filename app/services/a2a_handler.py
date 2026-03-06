@@ -19,6 +19,15 @@ from app.models.responses import (
 
 logger = get_logger()
 
+# First-chat welcome message (UI replaces {user_name}); lines match screenshot action buttons.
+WELCOME_MESSAGE_FIRST_CHAT = """Welcome {user_name}! I am Cisco Uber Assistant. How can I help you today?
+Book a demo or trial
+Chat with Sales
+Get Support
+Licensing
+Get Cisco Certified
+Velocity Hub"""
+
 
 class A2AResponseLoader:
     """
@@ -333,6 +342,24 @@ class A2AHandler:
         )
         return a2a_response
 
+    def build_welcome_response(
+        self,
+        session_id: str | None = None,
+        request_id: str | int | None = None,
+        context_id: str | None = None,
+        cp_gutc_id: str | None = None,
+        referrer: str | None = None,
+    ) -> A2AResponse:
+        """Build A2A response with first-chat welcome message (contains {user_name} for UI to replace)."""
+        return self.build_a2a_response_from_content(
+            text_content=WELCOME_MESSAGE_FIRST_CHAT,
+            session_id=session_id,
+            request_id=request_id,
+            context_id=context_id,
+            cp_gutc_id=cp_gutc_id,
+            referrer=referrer,
+        )
+
     def build_a2a_response_from_content(
         self,
         text_content: str,
@@ -397,7 +424,6 @@ class A2AHandler:
             timestamp=timestamp_str,
         )
         result_metadata = A2AResultMetadata(
-            requestId=response_id,
             timestamp=timestamp_str,
             sessionId=session_id,
             conversationId=resolved_context_id,
@@ -410,14 +436,12 @@ class A2AHandler:
             contextId=resolved_context_id,
             status=task_status,
             artifacts=[artifact],
-            sessionId=session_id,
             role="assistant",
             metadata=result_metadata,
         )
         a2a_response = A2AResponse(
             jsonrpc="2.0",
             id=response_id,
-            request_id=response_id,
             result=task_result,
         )
         return a2a_response

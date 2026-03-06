@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UI Request and Response – Data Contract</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; line-height: 1.6; color: #222; }
+    h1 { font-size: 1.75rem; border-bottom: 1px solid #ccc; padding-bottom: 0.5rem; }
+    h2 { font-size: 1.35rem; margin-top: 2rem; }
+    h3 { font-size: 1.15rem; margin-top: 1.5rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
+    th, td { border: 1px solid #ccc; padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: #f5f5f5; font-weight: 600; }
+    pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.85rem; border-radius: 4px; }
+    code { background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
+    ul, ol { padding-left: 1.5rem; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0; }
+    strong { font-weight: 600; }
+    .note { margin: 1rem 0; padding: 0.75rem; background: #f9f9f9; border-left: 4px solid #666; }
+    @media print { body { padding: 1rem; } h2 { page-break-after: avoid; } table, pre { page-break-inside: avoid; } }
+  </style>
+</head>
+<body>
+
+<h1>UI Request and Response – Data Contract</h1>
+<p>This document defines the WebSocket payload contract between the <strong>UI</strong> and the <strong>backend</strong>: every field in the request and response, whether it is required or optional, and sample payloads. All communication is over a single WebSocket connection; the UI sends JSON requests and receives JSON responses.</p>
+
+<hr>
+
+<h2>1. High-level flow</h2>
+<ol>
+  <li><strong>UI</strong> opens a WebSocket to the backend (e.g. <code>ws://host/ciscoua/api/v1/ws</code>). Subprotocol (e.g. <code>cdca2a</code>) is optional.</li>
+  <li><strong>UI</strong> sends one JSON request per user action. The request has top-level <code>jsonrpc</code>, <code>id</code>, and <code>params</code> (see Request Payload below).</li>
+  <li><strong>Backend</strong> validates the request, resolves or creates a session, and returns exactly one of: a success result, an error, or an in-progress result (with a final result sent later on the same WebSocket).</li>
+  <li><strong>UI</strong> uses the response: stores <code>result.metadata.sessionId</code> and <code>result.metadata.conversationId</code> (or <code>result.contextId</code>) for follow-up; replaces <code>{user_name}</code> in welcome text when applicable.</li>
+</ol>
+
+<hr>
+
+<h2>2. Request payload – field reference</h2>
+<p>The UI sends a single JSON object per message. All field names are camelCase in the wire format.</p>
+
+<h3>2.1 Top-level</h3>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>jsonrpc</code></td><td><strong>Yes</strong></td><td>string</td><td>Must be <code>"2.0"</code>.</td></tr>
+    <tr><td><code>id</code></td><td>No</td><td>string | number</td><td>Request identifier. Echoed in the response. Recommended: string (e.g. <code>"req-a1b2c3d4"</code>).</td></tr>
+    <tr><td><code>params</code></td><td><strong>Yes</strong></td><td>object</td><td>Must contain <code>message</code>; may contain <code>metadata</code>. See below.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 <code>params.message</code></h3>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>role</code></td><td>No</td><td>string</td><td>Sender role. Default <code>"user"</code>.</td></tr>
+    <tr><td><code>parts</code></td><td><strong>Yes</strong>*</td><td>array</td><td>Content parts. Each element has <code>kind</code> (optional, default <code>"text"</code>) and <code>text</code> (string). For a normal query, at least one part with non-empty <code>text</code> is required. *Exception: when <code>params.metadata.isFirstChat</code> is <code>true</code>, <code>parts</code> may be empty (backend returns first-chat welcome).</td></tr>
+    <tr><td><code>messageId</code></td><td>No</td><td>string</td><td>Client message id.</td></tr>
+    <tr><td><code>contextId</code></td><td>No</td><td>string</td><td>Conversation/context id for <strong>follow-up</strong> turns. Should match the <code>conversationId</code> the UI is using for this thread.</td></tr>
+  </tbody>
+</table>
+<p><strong><code>parts[]</code> element:</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>kind</code></td><td>No</td><td>string</td><td>Part type. Default <code>"text"</code>.</td></tr>
+    <tr><td><code>text</code></td><td><strong>Yes</strong> (for text parts)</td><td>string</td><td>User query or content.</td></tr>
+  </tbody>
+</table>
+
+<h3>2.3 <code>params.metadata</code></h3>
+<p>Entire object is optional. If present, all fields inside are optional.</p>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>sessionId</code></td><td>No</td><td>string | null</td><td>Session id from a previous response. Omit or null for first turn; backend creates one and returns it in <code>result.metadata.sessionId</code>.</td></tr>
+    <tr><td><code>conversationId</code></td><td>No</td><td>string</td><td>UI-generated conversation id. Backend echoes it in the response. Use the same value for all messages in the same conversation.</td></tr>
+    <tr><td><code>CP_GUTC_Id</code></td><td>No</td><td>string</td><td>Pass-through; echoed in <code>result.metadata</code>.</td></tr>
+    <tr><td><code>referrer</code></td><td>No</td><td>string</td><td>Pass-through; echoed in <code>result.metadata</code>.</td></tr>
+    <tr><td><code>isFirstChat</code></td><td>No</td><td>boolean</td><td><strong>true</strong>: backend returns the first-chat welcome message (query in <code>parts</code> may be empty). <strong>false</strong> or omit: normal query; at least one part with non-empty <code>text</code> is required.</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  <p><strong>Clarifications:</strong></p>
+  <ul>
+    <li><strong>sessionId:</strong> For follow-up in the same session, send the value from <code>result.metadata.sessionId</code> of the previous response. If the backend returns an error with code <strong>-32000</strong> (session expired/not found), clear stored <code>sessionId</code> and send the next request without it (or with null).</li>
+    <li><strong>conversationId:</strong> Always generated by the UI. Backend never creates it; it only echoes it. Use the same <code>conversationId</code> for all messages in the same thread.</li>
+    <li><strong>isFirstChat:</strong> Set to <code>true</code> only on the very first message of a new conversation to get the welcome message. Set to <code>false</code> or omit for normal queries.</li>
+  </ul>
+</div>
+
+<hr>
+
+<h2>3. Response payload – field reference</h2>
+<p>The backend sends a single JSON object per response. Either <code>result</code> is present (success or in-progress) or <code>error</code> is present (error). All field names are camelCase.</p>
+
+<h3>3.1 Top-level</h3>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>When</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>jsonrpc</code></td><td><strong>Yes</strong></td><td>Always</td><td>string</td><td><code>"2.0"</code>.</td></tr>
+    <tr><td><code>id</code></td><td>No</td><td>Always</td><td>string | number | null</td><td>Echo of the request <code>id</code>.</td></tr>
+    <tr><td><code>result</code></td><td><strong>Yes</strong> (on success/in-progress)</td><td>When no error</td><td>object</td><td>Task result; see below.</td></tr>
+    <tr><td><code>error</code></td><td><strong>Yes</strong> (on error)</td><td>When error</td><td>object</td><td><code>code</code> and <code>message</code>. See Error response.</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 Success response: <code>result</code></h3>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>kind</code></td><td><strong>Yes</strong></td><td>string</td><td><code>"task"</code>.</td></tr>
+    <tr><td><code>id</code></td><td><strong>Yes</strong></td><td>string</td><td>Task id from backend.</td></tr>
+    <tr><td><code>contextId</code></td><td>No</td><td>string | null</td><td>Echo of request <code>conversationId</code> (or null).</td></tr>
+    <tr><td><code>status</code></td><td><strong>Yes</strong></td><td>object</td><td><code>state</code>, optional <code>message</code>, <code>timestamp</code>.</td></tr>
+    <tr><td><code>artifacts</code></td><td><strong>Yes</strong></td><td>array</td><td>At least one artifact; each has <code>artifactId</code>, <code>name</code>, <code>parts</code>. Response content is in <code>artifacts[].parts[].text</code>.</td></tr>
+    <tr><td><code>role</code></td><td><strong>Yes</strong></td><td>string</td><td><code>"assistant"</code>.</td></tr>
+    <tr><td><code>metadata</code></td><td>No</td><td>object</td><td>See <code>result.metadata</code> below.</td></tr>
+  </tbody>
+</table>
+<p><strong><code>result.status</code>:</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>state</code></td><td><strong>Yes</strong></td><td>string</td><td>e.g. <code>"completed"</code>, <code>"in_progress"</code>.</td></tr>
+    <tr><td><code>message</code></td><td>No</td><td>string</td><td>Optional status message.</td></tr>
+    <tr><td><code>timestamp</code></td><td>No</td><td>string</td><td>ISO 8601.</td></tr>
+  </tbody>
+</table>
+<p><strong><code>result.artifacts[]</code>:</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>artifactId</code></td><td><strong>Yes</strong></td><td>string</td><td>Id of the artifact.</td></tr>
+    <tr><td><code>name</code></td><td>No</td><td>string</td><td>Human-readable name.</td></tr>
+    <tr><td><code>parts</code></td><td><strong>Yes</strong></td><td>array</td><td>Content parts. Each has <code>kind</code> (e.g. <code>"text"</code>) and <code>text</code> (response content).</td></tr>
+  </tbody>
+</table>
+<p><strong><code>result.metadata</code></strong> (optional; backend typically populates for session/conversation continuity):</p>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>timestamp</code></td><td>No</td><td>string</td><td>ISO 8601 response time.</td></tr>
+    <tr><td><code>sessionId</code></td><td>No</td><td>string | null</td><td>Session id. <strong>UI should store this and send it in the next request</strong> for the same session.</td></tr>
+    <tr><td><code>conversationId</code></td><td>No</td><td>string | null</td><td>Echo of request <code>conversationId</code>. Use for follow-up.</td></tr>
+    <tr><td><code>CP_GUTC_Id</code></td><td>No</td><td>string | null</td><td>Echo of request value.</td></tr>
+    <tr><td><code>referrer</code></td><td>No</td><td>string | null</td><td>Echo of request value.</td></tr>
+  </tbody>
+</table>
+<p><strong>Where to read session/conversation for follow-up:</strong> Use <strong><code>result.metadata.sessionId</code></strong> and <strong><code>result.metadata.conversationId</code></strong> (or <strong><code>result.contextId</code></strong>, which matches <code>conversationId</code>). Session id is only inside <code>result.metadata</code>, not at the top level of <code>result</code>.</p>
+
+<h3>3.3 Error response: <code>error</code></h3>
+<table>
+  <thead><tr><th>Field</th><th>Required</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>code</code></td><td><strong>Yes</strong></td><td>number</td><td>e.g. <code>-32602</code> (invalid params / missing or empty query), <code>-32000</code> (session expired or not found).</td></tr>
+    <tr><td><code>message</code></td><td><strong>Yes</strong></td><td>string</td><td>Human-readable message.</td></tr>
+  </tbody>
+</table>
+<p>When the UI receives an error with <strong>code -32000</strong>, it should clear any stored <code>sessionId</code> and treat the next user action as a new session (omit or null <code>sessionId</code> in the next request).</p>
+
+<h3>3.4 In-progress response</h3>
+<p>The backend may respond with <code>result.status.state</code> = <code>"in_progress"</code> and an optional <code>result.status.message</code>. The final result for that request is then sent later on the same WebSocket. The UI should treat this as “processing” and wait for the final result on the same connection.</p>
+
+<hr>
+
+<h2>4. First chat vs normal query</h2>
+<table>
+  <thead><tr><th>Scenario</th><th>UI sends <code>isFirstChat</code></th><th>UI sends <code>parts</code></th><th>Backend behavior</th></tr></thead>
+  <tbody>
+    <tr><td>First chat</td><td><code>true</code></td><td>May be empty</td><td>Returns welcome message: "Welcome {user_name}! I am Cisco Uber Assistant. How can I help you today?" plus action lines. UI replaces <code>{user_name}</code>.</td></tr>
+    <tr><td>Normal query</td><td><code>false</code> or omit</td><td>At least one part with non-empty <code>text</code></td><td>Processes query; returns content or a fallback message in <code>result.artifacts</code>.</td></tr>
+    <tr><td>Empty query, not first chat</td><td><code>false</code> or omit</td><td>Empty</td><td>Backend returns error -32602 (missing/empty query).</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>5. Sample payloads</h2>
+
+<h3>5.1 Request – first turn</h3>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-a1b2c3d4",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [
+        { "kind": "text", "text": "get cases for test@cisco.com" }
+      ],
+      "messageId": "msg-001"
+    },
+    "metadata": {
+      "sessionId": null,
+      "conversationId": "conv-uuid-1111-2222-3333",
+      "CP_GUTC_Id": "gutc-abc123",
+      "referrer": "https://support.example.com",
+      "isFirstChat": true
+    }
+  }
+}</pre>
+
+<h3>5.2 Request – follow-up</h3>
+<p>Use <code>sessionId</code> and <code>conversationId</code> from the previous response. Send the same <code>conversationId</code> in both <code>params.metadata.conversationId</code> and <code>params.message.contextId</code>.</p>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-e5f6g7h8",
+  "params": {
+    "message": {
+      "role": "user",
+      "contextId": "conv-uuid-1111-2222-3333",
+      "parts": [
+        { "kind": "text", "text": "show me the first one" }
+      ],
+      "messageId": "msg-002"
+    },
+    "metadata": {
+      "sessionId": "39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI",
+      "conversationId": "conv-uuid-1111-2222-3333",
+      "CP_GUTC_Id": "gutc-abc123",
+      "referrer": "https://support.example.com",
+      "isFirstChat": false
+    }
+  }
+}</pre>
+
+<h3>5.3 Response – success</h3>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-a1b2c3d4",
+  "result": {
+    "kind": "task",
+    "id": "task_xyz-789",
+    "contextId": "conv-uuid-1111-2222-3333",
+    "status": {
+      "state": "completed",
+      "message": null,
+      "timestamp": "2025-02-18T12:00:00.000000+00:00"
+    },
+    "artifacts": [
+      {
+        "artifactId": "art-001",
+        "name": "agent_response",
+        "parts": [
+          { "kind": "text", "text": "Here are your cases: ..." }
+        ]
+      }
+    ],
+    "role": "assistant",
+    "metadata": {
+      "timestamp": "2025-02-18T12:00:00.000000+00:00",
+      "sessionId": "39HARr8dJYEUEeFDYheE4d3-q3EsSlPO7CBHyd_4YSI",
+      "conversationId": "conv-uuid-1111-2222-3333",
+      "CP_GUTC_Id": "gutc-abc123",
+      "referrer": "https://support.example.com"
+    }
+  }
+}</pre>
+
+<h3>5.4 Response – error (invalid params)</h3>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-a1b2c3d4",
+  "error": {
+    "code": -32602,
+    "message": "Invalid params: expected params.message with role and parts (e.g. parts[].text)."
+  }
+}</pre>
+
+<h3>5.5 Response – error (session expired)</h3>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-e5f6g7h8",
+  "error": {
+    "code": -32000,
+    "message": "Session expired or not found."
+  }
+}</pre>
+
+<h3>5.6 Response – in progress</h3>
+<p>The backend may send this when the work is deferred; the final result is sent later on the same WebSocket.</p>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": "req-a1b2c3d4",
+  "result": {
+    "kind": "task",
+    "id": "task-pending-abc",
+    "status": {
+      "state": "in_progress",
+      "message": "Processing; final result will follow."
+    }
+  }
+}</pre>
+
+<hr>
+
+<h2>6. UI checklist</h2>
+<p><strong>Every request:</strong></p>
+<ul>
+  <li>Send valid JSON with <code>jsonrpc: "2.0"</code> and <code>params</code> containing <code>message</code> (with <code>parts</code> array).</li>
+  <li>For non–first-chat messages, ensure <code>params.message.parts</code> has at least one part with non-empty <code>text</code>, or the backend returns error -32602.</li>
+  <li>Use a stable <code>id</code> (e.g. string) if you need to correlate responses.</li>
+</ul>
+<p><strong>Session continuity (follow-up):</strong></p>
+<ul>
+  <li>After the first successful response, store <code>result.metadata.sessionId</code>.</li>
+  <li>Send that value in <code>params.metadata.sessionId</code> on subsequent requests in the same session.</li>
+  <li>If the backend returns error -32000, clear stored <code>sessionId</code> and start a new session (omit or null <code>sessionId</code> on the next request).</li>
+</ul>
+<p><strong>Conversation threading:</strong></p>
+<ul>
+  <li>Generate and store a <code>conversationId</code> (e.g. UUID) per conversation.</li>
+  <li>Send it in <code>params.metadata.conversationId</code> and, for follow-up, in <code>params.message.contextId</code>.</li>
+  <li>Use the same <code>conversationId</code> for all messages in that thread.</li>
+</ul>
+<p><strong>First-chat welcome:</strong></p>
+<ul>
+  <li>On the very first message of a new conversation, set <code>params.metadata.isFirstChat</code> to <code>true</code> to receive the welcome message; replace <code>{user_name}</code> in the returned text with the actual user name.</li>
+</ul>
+
+<hr>
+
+<h2>7. Related documents</h2>
+<ul>
+  <li><strong><code>UI_REQUEST_RESPONSE_SAMPLES.md</code></strong> – Copy-paste request/response examples (pretty and inline).</li>
+  <li><strong><code>FIRST_CHAT_WELCOME_SPEC.md</code></strong> – First-chat welcome message content and behavior.</li>
+  <li><strong><code>SESSION_CONNECTION_WORKFLOW.md</code></strong> – Session and connection lifecycle, TTL, multi-tab.</li>
+</ul>
+
+</body>
+</html>

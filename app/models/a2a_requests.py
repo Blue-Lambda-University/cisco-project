@@ -24,14 +24,13 @@ class A2AMessage(BaseModel):
 
 
 class A2ARequestMetadata(BaseModel):
-    """Metadata inside params (requestId, sessionId, conversationId, email, CP_GUTC_Id, referrer)."""
+    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, isFirstChat)."""
 
-    email: str | None = Field(default=None, description="User email")
-    request_id: str | None = Field(default=None, alias="requestId", description="Request id")
     session_id: str | None = Field(default=None, alias="sessionId", description="Session id for TTL")
     conversation_id: str | None = Field(default=None, alias="conversationId", description="Conversation/context id")
     cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id", description="CP GUTC Id from UI (passed to webhook/orchestrator)")
     referrer: str | None = Field(default=None, description="Referrer from UI (passed to webhook/orchestrator)")
+    is_first_chat: bool = Field(default=False, alias="isFirstChat", description="True when first chat; return welcome message")
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -46,17 +45,12 @@ class A2ASendMessageParams(BaseModel):
 
 
 class A2ASendMessageRequest(BaseModel):
-    """Full JSON-RPC 2.0 request for agent/sendMessage."""
+    """Full JSON-RPC 2.0 request for agent/sendMessage (method optional; UI may omit)."""
 
     jsonrpc: str = Field(default="2.0", description="JSON-RPC version")
-    method: str = Field(..., description="Method name, e.g. 'agent/sendMessage'")
+    method: str | None = Field(default=None, description="Optional; e.g. 'agent/sendMessage'. UI may omit.")
     params: A2ASendMessageParams = Field(..., description="Request params")
-    id: str | int | None = Field(default=None, description="Request id (JSON-RPC; echoed in response)")
-    request_id: str | int | None = Field(
-        default=None,
-        alias="requestId",
-        description="Request id at top level (same as id; preferred for extraction)",
-    )
+    id: str | int | None = Field(default=None, description="Request id (JSON-RPC; echoed in response as id only)")
 
     model_config = {"populate_by_name": True}
 
@@ -70,7 +64,7 @@ def parse_a2a_request(data: dict[str, Any]) -> A2ASendMessageRequest | None:
     if data.get("jsonrpc") != "2.0":
         return None
     method = data.get("method")
-    if method not in ("agent/sendMessage", "SendMessage"):
+    if method is not None and method not in ("agent/sendMessage", "SendMessage"):
         return None
     params = data.get("params")
     if not isinstance(params, dict) or "message" not in params:
@@ -83,27 +77,22 @@ def parse_a2a_request(data: dict[str, Any]) -> A2ASendMessageRequest | None:
 
 def extract_a2a_ids_and_query(
     request: A2ASendMessageRequest,
-) -> tuple[str, str | None, str | None, str | None, str | None, str | None]:
+) -> tuple[str, str | None, str | None, str | None, str | None, str | None, bool]:
     """
     Extract query text and ids from a parsed A2A request.
 
     Returns:
-        (query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer)
+        (query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat)
     """
-    request_id = None
-    if getattr(request, "request_id", None) is not None:
-        request_id = str(request.request_id)
-    elif request.id is not None:
-        request_id = str(request.id)
+    request_id = str(request.id) if request.id is not None else None
     session_id: str | None = None
     conversation_id: str | None = None
     cp_gutc_id: str | None = None
     referrer: str | None = None
+    is_first_chat = False
 
     if request.params.metadata:
         meta = request.params.metadata
-        if request_id is None and meta.request_id:
-            request_id = str(meta.request_id)
         if meta.session_id:
             session_id = (meta.session_id or "").strip() or None
         if meta.conversation_id:
@@ -112,6 +101,7 @@ def extract_a2a_ids_and_query(
             cp_gutc_id = (meta.cp_gutc_id or "").strip() or None
         if meta.referrer:
             referrer = (meta.referrer or "").strip() or None
+        is_first_chat = getattr(meta, "is_first_chat", False)
 
     if not conversation_id and request.params.message.context_id:
         conversation_id = (request.params.message.context_id or "").strip() or None
@@ -122,4 +112,4 @@ def extract_a2a_ids_and_query(
             query_parts.append(part.text.strip())
     query_text = " ".join(query_parts).strip() if query_parts else ""
 
-    return query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer
+    return query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat
