@@ -8,14 +8,7 @@ from typing import Any
 
 from app.core.latency_simulator import LatencySimulator
 from app.logging.setup import get_logger
-from app.models.responses import (
-    A2AArtifact,
-    A2AArtifactPart,
-    A2AResponse,
-    A2AResultMetadata,
-    A2ATaskResult,
-    A2ATaskStatus,
-)
+from app.models.responses import UIResponse
 
 logger = get_logger()
 
@@ -216,44 +209,35 @@ class A2AHandler:
         self._latency_simulator = latency_simulator
         self._logger = logger.bind(component="a2a_handler")
 
-    async def handle(self, plain_text: str) -> A2AResponse:
+    async def handle(self, plain_text: str) -> UIResponse:
         """
-        Handle a plain text query and return an A2A response.
+        Handle a plain text query and return a UIResponse.
         
         Args:
             plain_text: The plain text query.
             
         Returns:
-            A2AResponse Pydantic model with JSON-RPC 2.0 structure.
+            UIResponse wrapping the A2A result.
         """
         start_time = datetime.utcnow()
         
-        # Match input to response key
         response_key = self._matcher.match(plain_text)
-        
-        # Get response configuration
         response_config = self._loader.get_response_config(response_key)
         
         if not response_config:
-            # Fallback to default
             response_config = self._loader.get_response_config("default")
         
-        # Simulate latency
         latency_override = response_config.get("latency_override")
         if latency_override:
             min_ms = latency_override.get("min_ms", 50)
             max_ms = latency_override.get("max_ms", 150)
             await self._latency_simulator.simulate_range(min_ms, max_ms)
         
-        # Extract the text content from the response template
         text_content = self._extract_text_content(response_config)
         
-        # Build the A2A response using Pydantic models (plain text path: no request/session/context ids)
-        a2a_response = self._build_a2a_response(
+        ui_response = self._build_a2a_response(
             text_content,
-            session_id=None,
-            request_id=None,
-            context_id=None,
+            query_text=plain_text,
         )
         
         processing_time_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
@@ -265,7 +249,7 @@ class A2AHandler:
             processing_time_ms=round(processing_time_ms, 2),
         )
         
-        return a2a_response
+        return ui_response
 
     def _extract_text_content(self, response_config: dict[str, Any]) -> str:
         """
@@ -298,20 +282,12 @@ class A2AHandler:
         conversation_id: str | None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-    ) -> A2AResponse:
+    ) -> UIResponse:
         """
         Handle an A2A JSON request (agent/sendMessage): match query, build response with ids.
 
-        Args:
-            query: User query text from params.message.parts.
-            session_id: Current session id (set in result.sessionId).
-            request_id: Request id from client (echoed in response id).
-            conversation_id: Conversation/context id (echoed in result.contextId).
-            cp_gutc_id: CP GUTC Id from UI (echoed in result.metadata).
-            referrer: Referrer from UI (echoed in result.metadata).
-
         Returns:
-            A2AResponse with result.sessionId, result.contextId, result.metadata, id set.
+            UIResponse wrapping the A2A result with metadata.
         """
         start_time = datetime.utcnow()
         response_key = self._matcher.match(query)
@@ -324,14 +300,14 @@ class A2AHandler:
             max_ms = latency_override.get("max_ms", 150)
             await self._latency_simulator.simulate_range(min_ms, max_ms)
         text_content = self._extract_text_content(response_config)
-        context_id = conversation_id
-        a2a_response = self._build_a2a_response(
+        ui_response = self._build_a2a_response(
             text_content,
             session_id=session_id,
             request_id=request_id,
-            context_id=context_id,
+            conversation_id=conversation_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            query_text=query,
         )
         processing_time_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
         self._logger.info(
@@ -340,7 +316,7 @@ class A2AHandler:
             response_key=response_key,
             processing_time_ms=round(processing_time_ms, 2),
         )
-        return a2a_response
+        return ui_response
 
     def build_welcome_response(
         self,
@@ -349,15 +325,40 @@ class A2AHandler:
         context_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-    ) -> A2AResponse:
-        """Build A2A response with first-chat welcome message (contains {user_name} for UI to replace)."""
-        return self.build_a2a_response_from_content(
-            text_content=WELCOME_MESSAGE_FIRST_CHAT,
-            session_id=session_id,
-            request_id=request_id,
-            context_id=context_id,
-            cp_gutc_id=cp_gutc_id,
-            referrer=referrer,
+    ) -> UIResponse:
+        """Build welcome UIResponse (first-chat). UI replaces {user_name}."""
+        now = datetime.utcnow()
+        timestamp_str = now.isoformat() + "Z"
+        response_id = str(request_id) if request_id is not None else None
+
+        a2a_inner: dict[str, Any] = {
+            "id": response_id,
+            "jsonrpc": "2.0",
+            "result": {
+                "contextId": context_id or "",
+                "artifacts": [
+                    {
+                        "artifactId": "",
+                        "name": "welcome_message",
+                        "parts": [{"kind": "text", "text": WELCOME_MESSAGE_FIRST_CHAT}],
+                    }
+                ],
+                "role": "assistant",
+                "metadata": {
+                    "timestamp": timestamp_str,
+                    "sessionId": session_id,
+                    "conversationId": context_id or "",
+                    "CP_GUTC_Id": cp_gutc_id,
+                    "referrer": referrer,
+                },
+            },
+        }
+
+        return UIResponse(
+            context_id=context_id or "",
+            response=WELCOME_MESSAGE_FIRST_CHAT,
+            conversation_id=context_id or "",
+            a2a_response=a2a_inner,
         )
 
     def build_a2a_response_from_content(
@@ -366,22 +367,23 @@ class A2AHandler:
         session_id: str | None = None,
         request_id: str | int | None = None,
         context_id: str | None = None,
+        conversation_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-    ) -> A2AResponse:
+        query_text: str | None = None,
+    ) -> UIResponse:
         """
-        Build an A2A response from raw content (e.g. from webhook/orchestrator callback).
-        Use this when the webhook receives the orchestrator response: pass content and
-        metadata (including CP_GUTC_Id, referrer from WebhookIncomingBody) so the
-        response to the frontend has the correct result.metadata.
+        Build a UIResponse from raw content (e.g. from webhook/orchestrator callback).
         """
         return self._build_a2a_response(
             text_content=text_content,
             session_id=session_id,
             request_id=request_id,
             context_id=context_id,
+            conversation_id=conversation_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            query_text=query_text,
         )
 
     def _build_a2a_response(
@@ -390,58 +392,75 @@ class A2AHandler:
         session_id: str | None = None,
         request_id: str | int | None = None,
         context_id: str | None = None,
+        conversation_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-    ) -> A2AResponse:
+        query_text: str | None = None,
+    ) -> UIResponse:
         """
-        Build an A2A response using Pydantic models.
+        Build a UIResponse wrapping the A2A result (success / normal-query shape).
 
-        Args:
-            text_content: The text content to include in the response.
-            session_id: Session id to return in result.sessionId.
-            request_id: Request id to echo in response id.
-            context_id: Context/conversation id for result.contextId.
-            cp_gutc_id: CP GUTC Id from UI (echoed in result.metadata).
-            referrer: Referrer from UI (echoed in result.metadata).
-
-        Returns:
-            A2AResponse Pydantic model.
+        ``contextId`` is the A2A backend context (generated when not supplied).
+        ``conversationId`` is the UI thread id (echoed back).
+        ``history`` contains user + agent messages per the spec.
+        ``metadata`` lives at the ``a2aResponse`` level.
         """
         now = datetime.utcnow()
         timestamp_str = now.isoformat() + "Z"
-        resolved_context_id = context_id
         response_id = str(request_id) if request_id is not None else None
+        resolved_context_id = context_id or str(uuid.uuid4())
+        task_id = str(uuid.uuid4())
 
-        artifact_part = A2AArtifactPart(kind="text", text=text_content)
-        artifact = A2AArtifact(
-            artifactId=f"art_{uuid.uuid4()}",
-            name="Response from orchestration",
-            parts=[artifact_part],
+        history: list[dict[str, Any]] = []
+        if query_text:
+            history.append({
+                "contextId": resolved_context_id,
+                "kind": "message",
+                "messageId": str(uuid.uuid4()).replace("-", ""),
+                "parts": [{"kind": "text", "text": query_text}],
+                "role": "user",
+                "taskId": task_id,
+            })
+            history.append({
+                "contextId": resolved_context_id,
+                "kind": "message",
+                "messageId": str(uuid.uuid4()),
+                "parts": [{"kind": "text", "text": "Processing your request..."}],
+                "role": "agent",
+                "taskId": task_id,
+            })
+
+        a2a_inner: dict[str, Any] = {
+            "id": response_id,
+            "jsonrpc": "2.0",
+            "result": {
+                "artifacts": [
+                    {
+                        "artifactId": str(uuid.uuid4()),
+                        "name": "agent_response",
+                        "parts": [{"kind": "text", "text": text_content}],
+                    }
+                ],
+                "contextId": resolved_context_id,
+                "history": history,
+                "id": task_id,
+                "kind": "task",
+                "status": {"state": "completed", "timestamp": timestamp_str},
+            },
+            "metadata": {
+                "timestamp": timestamp_str,
+                "sessionId": session_id,
+                "conversationId": conversation_id or "",
+                "CP_GUTC_Id": cp_gutc_id,
+                "referrer": referrer,
+            },
+        }
+
+        return UIResponse(
+            context_id=resolved_context_id,
+            response=text_content,
+            conversation_id=conversation_id or "",
+            a2a_response=a2a_inner,
+            error={},
+            status="success",
         )
-        task_status = A2ATaskStatus(
-            state="completed",
-            message=None,
-            timestamp=timestamp_str,
-        )
-        result_metadata = A2AResultMetadata(
-            timestamp=timestamp_str,
-            sessionId=session_id,
-            conversationId=resolved_context_id,
-            cp_gutc_id=cp_gutc_id,
-            referrer=referrer,
-        )
-        task_result = A2ATaskResult(
-            kind="task",
-            id=f"task_{uuid.uuid4()}",
-            contextId=resolved_context_id,
-            status=task_status,
-            artifacts=[artifact],
-            role="assistant",
-            metadata=result_metadata,
-        )
-        a2a_response = A2AResponse(
-            jsonrpc="2.0",
-            id=response_id,
-            result=task_result,
-        )
-        return a2a_response

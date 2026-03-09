@@ -185,13 +185,14 @@ class TestWebSocketMessages:
             assert "Session expired or not found" in response["payload"]["message"]
 
     def test_invalid_json(self, client: TestClient):
-        """Test handling of invalid JSON."""
+        """Invalid JSON is treated as plain text and returns a UIResponse."""
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_text("not valid json {{{")
             response = websocket.receive_json()
-            
-            assert response["type"] == "error"
-            assert response["payload"]["code"] == "INVALID_JSON"
+
+            assert response.get("status") == "success"
+            assert "response" in response
+            assert "a2aResponse" in response
 
     def test_missing_required_fields(self, client: TestClient):
         """Test handling of message with missing required fields."""
@@ -263,7 +264,7 @@ class TestA2ASendMessage:
     """Tests for A2A agent/sendMessage JSON-RPC request handling."""
 
     def test_a2a_first_turn(self, client: TestClient):
-        """First turn: no sessionId/conversationId; response has sessionId; contextId only if client sent conversationId."""
+        """First turn: no sessionId/conversationId; UIResponse wrapper with a2aResponse inside."""
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
@@ -278,18 +279,33 @@ class TestA2ASendMessage:
                 "id": "req-001",
             })
             response = websocket.receive_json()
-        assert response.get("jsonrpc") == "2.0"
-        assert response.get("id") == "req-001"
-        assert "error" not in response
-        result = response.get("result", {})
-        meta = result.get("metadata") or {}
+        assert response.get("status") == "success"
+        assert "response" in response
+
+        a2a = response.get("a2aResponse", {})
+        assert a2a.get("jsonrpc") == "2.0"
+        assert a2a.get("id") == "req-001"
+
+        meta = a2a.get("metadata") or {}
         assert meta.get("sessionId") is not None
         assert meta["sessionId"] and len(meta["sessionId"]) > 0
-        # contextId present only when client sent conversationId; server never creates it
+
+        result = a2a.get("result", {})
         assert "artifacts" in result
+        assert result.get("kind") == "task"
+        assert result.get("id")
+        assert result.get("contextId")
+        assert result.get("status", {}).get("state") == "completed"
+
+        # history includes user query
+        history = result.get("history", [])
+        assert len(history) >= 2
+        assert history[0]["role"] == "user"
+        assert history[1]["role"] == "agent"
 
     def test_a2a_follow_up(self, client: TestClient):
-        """Follow-up: send sessionId and conversationId from first response."""
+        """Follow-up: send sessionId and conversationId; response matches spec section 5.3."""
+        conv_id = "conv-uuid-follow-up-test"
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
@@ -297,43 +313,82 @@ class TestA2ASendMessage:
                     "message": {
                         "role": "user",
                         "parts": [{"kind": "text", "text": "hello"}],
-                        "message_id": "msg-1",
                     },
-                    "metadata": {"isFirstChat": True, "conversationId": "conv-uuid-follow-up-test"},
+                    "metadata": {"isFirstChat": True, "conversationId": conv_id},
                 },
                 "id": "req-1",
             })
             first = websocket.receive_json()
-        assert "error" not in first
-        session_id = (first["result"].get("metadata") or {}).get("sessionId")
-        assert session_id, "first response must include sessionId in result.metadata"
-        context_id = first["result"].get("contextId") or "conv-uuid-follow-up-test"
+
+        # Extract sessionId from welcome (metadata inside result)
+        a2a_first = first.get("a2aResponse", {})
+        result_first = a2a_first.get("result", {})
+        session_id = (result_first.get("metadata") or {}).get("sessionId")
+        assert session_id, "first response must include sessionId in a2aResponse.result.metadata"
+
+        # Follow-up request matching spec section 5.2
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
                 "params": {
                     "message": {
                         "role": "user",
-                        "contextId": context_id,
-                        "parts": [{"kind": "text", "text": "show second case"}],
-                        "message_id": "msg-2",
+                        "parts": [{"kind": "text", "text": "get my licensing cases"}],
                     },
                     "metadata": {
-                        "isFirstChat": False,
                         "sessionId": session_id,
-                        "conversationId": context_id,
+                        "conversationId": conv_id,
+                        "CP_GUTC_Id": "gutc-abc123",
+                        "referrer": "https://www.cisco.com",
+                        "isFirstChat": False,
                     },
                 },
                 "id": "req-2",
             })
             second = websocket.receive_json()
-        assert second.get("id") == "req-2"
-        assert "error" not in second
-        assert (second["result"].get("metadata") or {}).get("sessionId") == session_id
-        assert second["result"].get("contextId") == context_id
+
+        # Top-level UIResponse wrapper
+        assert second.get("status") == "success"
+        assert second.get("error") == {}
+        assert second.get("response")
+        assert second.get("conversationId") == conv_id
+        # contextId is generated (different from conversationId for real A2A)
+        assert second.get("contextId")
+
+        # Inner a2aResponse
+        a2a = second.get("a2aResponse", {})
+        assert a2a.get("id") == "req-2"
+        assert a2a.get("jsonrpc") == "2.0"
+
+        # a2aResponse.result matches spec task structure
+        result = a2a.get("result", {})
+        assert result.get("kind") == "task"
+        assert result.get("id")
+        assert result.get("contextId")
+        assert result.get("status", {}).get("state") == "completed"
+        artifacts = result.get("artifacts", [])
+        assert len(artifacts) >= 1
+        assert artifacts[0].get("name") == "agent_response"
+
+        # history array with user + agent messages
+        history = result.get("history", [])
+        assert len(history) == 2
+        assert history[0]["role"] == "user"
+        assert history[0]["kind"] == "message"
+        assert "get my licensing cases" in history[0]["parts"][0]["text"]
+        assert history[0]["taskId"] == result["id"]
+        assert history[1]["role"] == "agent"
+        assert history[1]["parts"][0]["text"] == "Processing your request..."
+
+        # metadata at a2aResponse level (not inside result)
+        meta = a2a.get("metadata") or {}
+        assert meta.get("sessionId") == session_id
+        assert meta.get("conversationId") == conv_id
+        assert meta.get("CP_GUTC_Id") == "gutc-abc123"
+        assert meta.get("referrer") == "https://www.cisco.com"
 
     def test_a2a_session_expired(self, client: TestClient):
-        """Unknown/expired sessionId returns A2A error -32000."""
+        """Unknown/expired sessionId returns A2A error -32404."""
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
@@ -354,42 +409,60 @@ class TestA2ASendMessage:
         assert response.get("jsonrpc") == "2.0"
         assert response.get("id") == "req-1"
         assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert response["error"]["code"] == -32404
         assert "Session expired" in response["error"]["message"]
 
     def test_a2a_first_chat_welcome(self, client: TestClient):
-        """When isFirstChat is true, return welcome message with {user_name} and action lines."""
+        """When isFirstChat is true, return UIResponse with welcome message matching spec format."""
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
                 "params": {
                     "message": {
                         "role": "user",
-                        "parts": [],
-                        "message_id": "msg-welcome",
+                        "parts": [{"kind": "text", "text": "Welcome"}],
                     },
-                    "metadata": {"isFirstChat": True},
+                    "metadata": {
+                        "sessionId": None,
+                        "conversationId": "conv-welcome-test",
+                        "isFirstChat": True,
+                    },
                 },
                 "id": "req-welcome",
             })
             response = websocket.receive_json()
-        assert response.get("jsonrpc") == "2.0"
-        assert response.get("id") == "req-welcome"
-        assert "error" not in response
-        result = response.get("result", {})
-        assert result.get("metadata", {}).get("sessionId")
-        artifacts = result.get("artifacts", [])
-        assert len(artifacts) >= 1
-        text_parts = [p for a in artifacts for p in a.get("parts", []) if p.get("kind") == "text"]
-        assert len(text_parts) >= 1
-        welcome_text = text_parts[0].get("text", "")
+
+        # Top-level UIResponse wrapper
+        assert "contextId" in response
+        assert "conversationId" in response
+        assert response["conversationId"] == "conv-welcome-test"
+        welcome_text = response.get("response", "")
         assert "{user_name}" in welcome_text
         assert "Cisco Uber Assistant" in welcome_text
         assert "Book a demo or trial" in welcome_text
         assert "Velocity Hub" in welcome_text
 
+        # Inner a2aResponse
+        a2a = response.get("a2aResponse", {})
+        assert a2a.get("jsonrpc") == "2.0"
+        assert a2a.get("id") == "req-welcome"
+        result = a2a.get("result", {})
+        assert result.get("contextId") == "conv-welcome-test"
+
+        # Welcome artifact
+        artifacts = result.get("artifacts", [])
+        assert len(artifacts) >= 1
+        assert artifacts[0].get("name") == "welcome_message"
+        assert artifacts[0].get("artifactId") == ""
+        assert result.get("role") == "assistant"
+
+        # Metadata inside result for welcome
+        meta = result.get("metadata", {})
+        assert meta.get("sessionId")
+        assert meta.get("conversationId") == "conv-welcome-test"
+
     def test_a2a_missing_query(self, client: TestClient):
-        """Empty or missing query (and not isFirstChat) returns A2A error -32602."""
+        """Empty or missing query (and not isFirstChat) returns A2A error -32422."""
         with client.websocket_connect("/ciscoua/api/v1/ws") as websocket:
             websocket.send_json({
                 "jsonrpc": "2.0",
@@ -406,5 +479,5 @@ class TestA2ASendMessage:
             response = websocket.receive_json()
         assert response.get("jsonrpc") == "2.0"
         assert "error" in response
-        assert response["error"]["code"] == -32602
-        assert "query" in response["error"]["message"].lower()
+        assert response["error"]["code"] == -32422
+        assert "params" in response["error"]["message"].lower()

@@ -10,7 +10,7 @@ from app.dependencies.providers import (
 )
 from app.logging.setup import bind_connection_context, clear_context, get_logger
 from app.models.enums import ErrorCode
-from app.models.responses import AsyncAcceptedResponse
+from app.models.responses import AsyncAcceptedResponse, UIResponse
 from app.services.message_handler import MessageHandler
 
 router = APIRouter(tags=["websocket"])
@@ -110,14 +110,12 @@ async def handle_connection(
             else:
                 response_json = response.model_dump_json(by_alias=True)
 
-            # Log based on response type (for non-AsyncAccepted)
             if not isinstance(response, AsyncAcceptedResponse):
-                if hasattr(response, "jsonrpc"):
-                    if hasattr(response, "error"):
-                        connection_logger.debug("a2a_response_sent", response_type="a2a_error")
-                    else:
-                        connection_logger.debug("a2a_response_sent", response_type="a2a")
-                else:
+                if isinstance(response, UIResponse):
+                    connection_logger.debug("a2a_response_sent", response_type="ui_response")
+                elif hasattr(response, "jsonrpc") and hasattr(response, "error"):
+                    connection_logger.debug("a2a_response_sent", response_type="a2a_error")
+                elif hasattr(response, "type"):
                     connection_logger.debug(
                         "response_sent",
                         response_type=response.type,

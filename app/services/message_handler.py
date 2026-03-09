@@ -23,8 +23,8 @@ from app.models.responses import (
     A2AErrorDetail,
     A2AErrorResponse,
     AsyncAcceptedResponse,
-    A2AResponse,
     OutgoingResponse,
+    UIResponse,
 )
 from app.services.agent_client import AgentClient
 from app.services.a2a_handler import A2AHandler
@@ -64,7 +64,7 @@ class MessageHandler:
         self,
         raw_message: str,
         connection_id: str | None = None,
-    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """
         Handle a raw WebSocket message.
         
@@ -222,7 +222,7 @@ class MessageHandler:
         self,
         a2a_request: A2ASendMessageRequest,
         connection_id: str | None = None,
-    ) -> A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler or forward to orchestrator."""
         query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat = extract_a2a_ids_and_query(
             a2a_request
@@ -238,8 +238,8 @@ class MessageHandler:
             return A2AErrorResponse(
                 jsonrpc="2.0",
                 error=A2AErrorDetail(
-                    code=-32602,
-                    message="Missing or empty query in params.message.parts",
+                    code=-32422,
+                    message="Invalid params: expected params.message with role and parts (e.g. parts[].text).",
                 ),
                 id=response_id,
             )
@@ -263,8 +263,8 @@ class MessageHandler:
                 return A2AErrorResponse(
                     jsonrpc="2.0",
                     error=A2AErrorDetail(
-                        code=-32000,
-                        message="Session expired or not found. Start a new session.",
+                        code=-32404,
+                        message="Session expired or not found.",
                     ),
                     id=response_id,
                 )
@@ -311,9 +311,11 @@ class MessageHandler:
                 connection_id=connection_id,
                 request_id=str(response_id) if response_id is not None else None,
                 session_id=session_id,
-                context_id=conversation_id,
+                context_id=None,
+                conversation_id=conversation_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
+                query_text=query_text,
             )
             message_payload = {
                 "role": "user",
@@ -384,7 +386,7 @@ class MessageHandler:
         raw_message: str,
         connection_id: str,
         subprotocol: str | None = None,
-    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
         """
         Handle a message with additional connection context.
 

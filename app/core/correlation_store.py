@@ -17,8 +17,10 @@ class PendingAsyncRequest:
     request_id: str | None
     session_id: str | None
     context_id: str | None
+    conversation_id: str | None
     cp_gutc_id: str | None
     referrer: str | None
+    query_text: str | None = None
 
 
 class CorrelationStore:
@@ -37,8 +39,10 @@ class CorrelationStore:
         request_id: str | None = None,
         session_id: str | None = None,
         context_id: str | None = None,
+        conversation_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
+        query_text: str | None = None,
     ) -> None:
         """Store context for a pending async request."""
         self._pending[correlation_id] = PendingAsyncRequest(
@@ -46,8 +50,10 @@ class CorrelationStore:
             request_id=request_id,
             session_id=session_id,
             context_id=context_id,
+            conversation_id=conversation_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            query_text=query_text,
         )
 
     def get_and_remove(self, correlation_id: str) -> PendingAsyncRequest | None:

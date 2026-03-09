@@ -43,19 +43,23 @@ async def _handle_async_response(
     session_id = body.session_id or record.session_id
     request_id = body.request_id or record.request_id
     context_id = body.context_id or record.context_id
+    conversation_id = record.conversation_id
     content = body.content or "(No content)"
     cp_gutc_id = body.cp_gutc_id or record.cp_gutc_id
     referrer = body.referrer or record.referrer
+    query_text = record.query_text
 
-    a2a_response = a2a_handler.build_a2a_response_from_content(
+    ui_response = a2a_handler.build_a2a_response_from_content(
         text_content=content,
         session_id=session_id,
         request_id=request_id,
         context_id=context_id,
+        conversation_id=conversation_id,
         cp_gutc_id=cp_gutc_id,
         referrer=referrer,
+        query_text=query_text,
     )
-    response_json = a2a_response.model_dump_json(by_alias=True)
+    response_json = ui_response.model_dump_json(by_alias=True)
 
     sent = await connection_manager.send_to_connection(record.connection_id, response_json)
     if not sent:

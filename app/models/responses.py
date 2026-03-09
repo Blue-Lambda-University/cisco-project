@@ -9,6 +9,30 @@ from app.models.enums import ErrorCode, ResponseType
 
 
 # =============================================================================
+# UI Response Wrapper (top-level contract between UI and backend)
+# =============================================================================
+
+
+class UIResponse(BaseModel):
+    """
+    Top-level response sent to the UI over WebSocket.
+
+    Wraps the A2A JSON-RPC response inside ``a2aResponse`` and promotes
+    convenience fields (``response``, ``contextId``, ``conversationId``)
+    to the top level so the UI does not need to dig into nested structures.
+    """
+
+    context_id: str = Field(default="", alias="contextId")
+    response: str = Field(default="")
+    conversation_id: str = Field(default="", alias="conversationId")
+    a2a_response: dict[str, Any] = Field(default_factory=dict, alias="a2aResponse")
+    error: dict[str, Any] = Field(default_factory=dict)
+    status: str = Field(default="success")
+
+    model_config = {"populate_by_name": True}
+
+
+# =============================================================================
 # A2A (Agent-to-Agent) JSON-RPC 2.0 Response Models
 # =============================================================================
 
