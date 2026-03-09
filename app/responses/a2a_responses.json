@@ -5,6 +5,7 @@
     "type": "contains",
     "case_sensitive": false,
     "priority_order": [
+      "licensing_cases",
       "licencing_configuration",
       "licencing_information",
       "product_information",
@@ -12,6 +13,39 @@
     ]
   },
   "responses": {
+    "licensing_cases": {
+      "match_patterns": ["cases", "licensing cases", "licencing cases", "get cases", "get my cases", "get my licensing cases", "get my licencing cases"],
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "{{request_id}}",
+        "result": {
+          "kind": "task",
+          "id": "{{task_uuid}}",
+          "contextId": "{{context_uuid}}",
+          "status": {
+            "state": "completed",
+            "message": null,
+            "timestamp": "{{timestamp}}"
+          },
+          "artifacts": [
+            {
+              "artifactId": "{{artifact_uuid}}",
+              "name": "Response from orchestration",
+              "parts": [
+                {
+                  "kind": "text",
+                  "text": "Hi, here are your current cases:\n<style>\n.case-table {border-collapse: collapse; width: 100%;}\n.case-table th, .case-table td {border: 1px solid #ddd; padding: 8px;}\n.case-table th {background-color: #f2f2f2; color: #333;}\n.case-table tr:nth-child(even){background-color: #f9f9f9;}\n.case-table tr:hover {background-color: #e6f7ff;}\n</style>\n<table class=\"case-table\">\n  <tr>\n    <th>Case Number</th>\n    <th>Status</th>\n    <th>Priority</th>\n    <th>Owner</th>\n    <th>Summary</th>\n    <th>Created Date</th>\n    <th>Closed Date</th>\n  </tr>\n  <tr>\n    <td>694377047</td>\n    <td>Closed</td>\n    <td>3</td>\n    <td>Sunil Karthik</td>\n    <td>Ask Licensing Bot - help</td>\n    <td>2022-10-05T01:41:49.000Z</td>\n    <td>2022-10-05T18:50:56.000Z</td>\n  </tr>\n</table>"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "latency_override": {
+        "min_ms": 100,
+        "max_ms": 300
+      }
+    },
     "welcome": {
       "match_patterns": ["welcome"],
       "response": {
