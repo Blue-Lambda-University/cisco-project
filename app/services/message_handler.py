@@ -297,15 +297,11 @@ class MessageHandler:
             self._settings
             and self._settings.async_flow_enabled
             and self._settings.agent_base_url
-            and (self._settings.webhook_base_url or "").strip()
             and connection_id
             and self._correlation_store is not None
             and self._agent_client is not None
         ):
             request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
-            base = self._settings.webhook_base_url.strip().rstrip("/")
-            path = (self._settings.webhook_async_path or "ws/async/response").strip("/")
-            webhook_url = f"{base}/ciscoua/api/v1/{path}"
             self._correlation_store.set(
                 request_id=request_id_str,
                 connection_id=connection_id,
@@ -321,7 +317,6 @@ class MessageHandler:
                 "parts": [{"kind": "text", "text": query_text}],
             }
             ok = await self._agent_client.send_async(
-                webhook_url=webhook_url,
                 message=message_payload,
                 request_id=request_id_str,
                 session_id=session_id,

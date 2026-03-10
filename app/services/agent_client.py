@@ -23,7 +23,6 @@ class AgentClient:
 
     async def send_async(
         self,
-        webhook_url: str,
         message: dict[str, Any],
         request_id: str | None = None,
         session_id: str | None = None,
@@ -32,12 +31,11 @@ class AgentClient:
         referrer: str | None = None,
     ) -> bool:
         """
-        POST the request to the orchestrator with the webhook URL.
+        POST the request to the orchestrator.
         The requestId is included in the payload so the orchestrator echoes it back.
         Returns True if the orchestrator accepted the request (2xx), False otherwise.
         """
         body = WebhookOutgoingBody(
-            webhook_url=webhook_url,
             message=message,
             request_id=request_id,
             session_id=session_id,

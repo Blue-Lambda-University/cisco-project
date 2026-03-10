@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
     
-    All settings can be overridden via environment variables prefixed with MOCK_WS_.
-    Example: MOCK_WS_PORT=9000 overrides the port setting.
+    All settings can be overridden via environment variables prefixed with UA_WS_.
+    Example: UA_WS_PORT=9000 overrides the port setting.
     """
 
     # Server configuration
@@ -114,8 +114,8 @@ class Settings(BaseSettings):
         description="When True, forward A2A requests to orchestrator and respond via webhook",
     )
     agent_base_url: str | None = Field(
-        default=None,
-        description="Base URL of the orchestrator/agent (e.g. https://{webhook_base_url}.com)",
+        default="http://cdcai-microsvc-uber-assistant-orchestration-agent-svc.ns-qry-aiml-stg-api.svc.cluster.local:8006",
+        description="Base URL of the orchestrator/agent",
     )
     webhook_base_url: str = Field(
         default="",
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     )
 
     model_config = {
-        "env_prefix": "MOCK_WS_",
+        "env_prefix": "UA_WS_",
         "env_file": ".env",
         "env_file_encoding": "utf-8",
     }

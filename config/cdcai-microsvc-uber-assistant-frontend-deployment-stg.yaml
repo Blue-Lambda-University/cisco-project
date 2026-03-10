@@ -39,27 +39,31 @@ data:
   LOG_LEVEL: "INFO"
   GOOGLE_CLOUD_PROJECT: "esearch-sandbox-wsdc"
 
-  # Application settings (MOCK_WS_* used by app/config.py)
-  MOCK_WS_ENVIRONMENT: "production"
-  MOCK_WS_LOG_LEVEL: "INFO"
-  MOCK_WS_MAX_CONNECTIONS: "1000"
+  # Application settings (UA_WS_* used by app/config.py)
+  UA_WS_ENVIRONMENT: "production"
+  UA_WS_LOG_LEVEL: "INFO"
+  UA_WS_MAX_CONNECTIONS: "1000"
 
   # Latency simulation
-  MOCK_WS_LATENCY_ENABLED: "true"
-  MOCK_WS_LATENCY_MIN_MS: "50"
-  MOCK_WS_LATENCY_MAX_MS: "300"
-  MOCK_WS_LATENCY_SPIKE_PROBABILITY: "0.05"
-  MOCK_WS_LATENCY_SPIKE_MIN_MS: "500"
-  MOCK_WS_LATENCY_SPIKE_MAX_MS: "2000"
+  UA_WS_LATENCY_ENABLED: "true"
+  UA_WS_LATENCY_MIN_MS: "50"
+  UA_WS_LATENCY_MAX_MS: "300"
+  UA_WS_LATENCY_SPIKE_PROBABILITY: "0.05"
+  UA_WS_LATENCY_SPIKE_MIN_MS: "500"
+  UA_WS_LATENCY_SPIKE_MAX_MS: "2000"
 
   # WebSocket subprotocols (JSON array)
-  MOCK_WS_SUPPORTED_SUBPROTOCOLS: '["circuit.v1", "circuit.v2", "cdca2a"]'
+  UA_WS_SUPPORTED_SUBPROTOCOLS: '["circuit.v1", "circuit.v2", "cdca2a"]'
+
+  # Orchestrator async flow
+  UA_WS_ASYNC_FLOW_ENABLED: "true"
+  UA_WS_AGENT_BASE_URL: "http://cdcai-microsvc-uber-assistant-orchestration-agent-svc.ns-qry-aiml-stg-api.svc.cluster.local:8006"
 
   # Redis session persistence (optional: set SESSION_PERSISTENCE_BACKEND to "redis" to enable)
-  MOCK_WS_REDIS_HOST: "10.68.81.4"
-  MOCK_WS_REDIS_PORT: "6397"
-  MOCK_WS_REDIS_DB: "0"
-  MOCK_WS_SESSION_PERSISTENCE_BACKEND: "memory"
+  UA_WS_REDIS_HOST: "10.68.81.4"
+  UA_WS_REDIS_PORT: "6397"
+  UA_WS_REDIS_DB: "0"
+  UA_WS_SESSION_PERSISTENCE_BACKEND: "memory"
 ---
 apiVersion: apps/v1
 kind: Deployment

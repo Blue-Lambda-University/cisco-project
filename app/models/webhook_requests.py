@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 # -----------------------------------------------------------------------------
-# Payload we SEND to the orchestrator (e.g. POST to orchestrator with webhook URL)
+# Payload we SEND to the orchestrator
 # -----------------------------------------------------------------------------
 
 
@@ -21,7 +21,6 @@ class WebhookOutgoingBody(BaseModel):
     JSON keys use camelCase to match UI (sessionId, requestId, etc.).
     """
 
-    webhook_url: str = Field(..., alias="webhookUrl", description="Our callback URL for async response")
     message: dict = Field(default_factory=dict, description="User message (e.g. role, parts)")
     request_id: str | None = Field(default=None, alias="requestId", description="Request id from UI — used as the correlation key")
     session_id: str | None = Field(default=None, alias="sessionId", description="Session id from UI")
