@@ -302,14 +302,13 @@ class MessageHandler:
             and self._correlation_store is not None
             and self._agent_client is not None
         ):
-            correlation_id = str(uuid.uuid4())
+            request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
             base = self._settings.webhook_base_url.strip().rstrip("/")
-            path = (self._settings.webhook_async_path or "webhooks/async/response").strip("/")
-            webhook_url = f"{base}/ciscoua/api/v1/{path}?correlationId={correlation_id}"
+            path = (self._settings.webhook_async_path or "ws/async/response").strip("/")
+            webhook_url = f"{base}/ciscoua/api/v1/{path}"
             self._correlation_store.set(
-                correlation_id=correlation_id,
+                request_id=request_id_str,
                 connection_id=connection_id,
-                request_id=str(response_id) if response_id is not None else None,
                 session_id=session_id,
                 context_id=None,
                 conversation_id=conversation_id,
@@ -323,9 +322,8 @@ class MessageHandler:
             }
             ok = await self._agent_client.send_async(
                 webhook_url=webhook_url,
-                correlation_id=correlation_id,
                 message=message_payload,
-                request_id=str(response_id) if response_id is not None else None,
+                request_id=request_id_str,
                 session_id=session_id,
                 context_id=conversation_id,
                 cp_gutc_id=cp_gutc_id,
@@ -333,13 +331,12 @@ class MessageHandler:
             )
             self._logger.info(
                 "a2a_request_forwarded_async",
-                correlation_id=correlation_id,
+                request_id=request_id_str,
                 connection_id=connection_id,
                 agent_accepted=ok,
             )
             return AsyncAcceptedResponse(
-                correlation_id=correlation_id,
-                request_id=response_id,
+                request_id=request_id_str,
             )
 
         bind_message_context(

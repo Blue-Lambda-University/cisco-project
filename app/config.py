@@ -115,14 +115,14 @@ class Settings(BaseSettings):
     )
     agent_base_url: str | None = Field(
         default=None,
-        description="Base URL of the orchestrator/agent (e.g. https://agent.example.com)",
+        description="Base URL of the orchestrator/agent (e.g. https://{webhook_base_url}.com)",
     )
     webhook_base_url: str = Field(
         default="",
-        description="Our base URL for webhook callback (e.g. https://our-service.example.com)",
+        description="Our base URL for webhook callback (e.g. https://{webhook_base_url}.com)",
     )
     webhook_async_path: str = Field(
-        default="webhooks/async/response",
+        default="ws/async/response",
         description="Path for async response webhook (appended to webhook_base_url)",
     )
 

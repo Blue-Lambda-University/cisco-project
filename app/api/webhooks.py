@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.core.connection_manager import ConnectionManager
@@ -16,7 +16,7 @@ from app.logging.setup import get_logger
 from app.models.webhook_requests import WebhookIncomingBody
 from app.services.a2a_handler import A2AHandler
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/ws", tags=["webhooks"])
 logger = get_logger()
 
 
@@ -26,22 +26,21 @@ def get_correlation_store_dep() -> CorrelationStore:
 
 
 async def _handle_async_response(
-    correlation_id: str,
+    request_id: str,
     body: WebhookIncomingBody,
     correlation_store: CorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
 ) -> tuple[bool, str]:
     """
-    Look up connection by correlation_id, build A2A response, send to WebSocket.
+    Look up connection by requestId, build A2A response, send to WebSocket.
     Returns (success, error_message).
     """
-    record = correlation_store.get_and_remove(correlation_id)
+    record = correlation_store.get_and_remove(request_id)
     if record is None:
-        return False, "correlation_id not found or already consumed"
+        return False, "requestId not found or already consumed"
 
     session_id = body.session_id or record.session_id
-    request_id = body.request_id or record.request_id
     context_id = body.context_id or record.context_id
     conversation_id = record.conversation_id
     content = body.content or "(No content)"
@@ -67,7 +66,7 @@ async def _handle_async_response(
 
     logger.info(
         "async_response_delivered",
-        correlation_id=correlation_id,
+        request_id=request_id,
         connection_id=record.connection_id,
     )
     return True, ""
@@ -79,23 +78,23 @@ async def webhook_async_response(
     correlation_store: Annotated[CorrelationStore, Depends(get_correlation_store)],
     connection_manager: ConnectionManagerDep,
     a2a_handler: Annotated[A2AHandler, Depends(get_a2a_handler)],
-    correlation_id: str | None = Query(default=None, alias="correlationId", description="Correlation id (alternative to body)"),
 ) -> JSONResponse:
     """
     Receive async response from the orchestrator.
+    The requestId in the body is used to look up the correlation store.
     ACK with 200 so the orchestrator can consider the message delivered.
     Return 5xx on failure so the orchestrator can retry.
     """
-    cid = correlation_id or body.correlation_id
-    if not cid:
-        logger.warning("webhook_async_response_missing_correlation_id")
+    rid = body.request_id
+    if not rid:
+        logger.warning("webhook_async_response_missing_request_id")
         return JSONResponse(
             status_code=400,
-            content={"error": "correlationId required (query or body)"},
+            content={"error": "requestId required in body"},
         )
 
     success, err = await _handle_async_response(
-        correlation_id=cid,
+        request_id=rid,
         body=body,
         correlation_store=correlation_store,
         connection_manager=connection_manager,

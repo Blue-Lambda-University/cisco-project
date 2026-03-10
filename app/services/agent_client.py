@@ -24,7 +24,6 @@ class AgentClient:
     async def send_async(
         self,
         webhook_url: str,
-        correlation_id: str,
         message: dict[str, Any],
         request_id: str | None = None,
         session_id: str | None = None,
@@ -33,13 +32,12 @@ class AgentClient:
         referrer: str | None = None,
     ) -> bool:
         """
-        POST the request to the orchestrator with the webhook URL and correlation id.
-        Uses WebhookOutgoingBody (camelCase) for the JSON payload.
+        POST the request to the orchestrator with the webhook URL.
+        The requestId is included in the payload so the orchestrator echoes it back.
         Returns True if the orchestrator accepted the request (2xx), False otherwise.
         """
         body = WebhookOutgoingBody(
             webhook_url=webhook_url,
-            correlation_id=correlation_id,
             message=message,
             request_id=request_id,
             session_id=session_id,
@@ -55,17 +53,17 @@ class AgentClient:
             if resp.is_success:
                 self._logger.info(
                     "agent_request_sent",
-                    correlation_id=correlation_id,
+                    request_id=request_id,
                     status_code=resp.status_code,
                 )
                 return True
             self._logger.warning(
                 "agent_request_failed",
-                correlation_id=correlation_id,
+                request_id=request_id,
                 status_code=resp.status_code,
                 body=resp.text[:200],
             )
             return False
         except Exception as e:
-            self._logger.exception("agent_request_error", correlation_id=correlation_id, error=str(e))
+            self._logger.exception("agent_request_error", request_id=request_id, error=str(e))
             return False

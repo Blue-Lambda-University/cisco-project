@@ -178,19 +178,17 @@ class AsyncAcceptedResponse(BaseModel):
     The UI receives an in-progress style response; the full result is delivered via webhook.
     """
 
-    correlation_id: str = Field(..., description="Id used to correlate the webhook response")
-    request_id: str | int | None = Field(default=None, description="Request id to echo in response")
+    request_id: str = Field(..., description="Request id used to correlate the webhook response")
 
     def to_a2a_in_progress_json(self) -> str:
-        """Serialize as an A2A-style in_progress result for the WebSocket (id only, no requestId)."""
+        """Serialize as an A2A-style in_progress result for the WebSocket."""
         import json
-        id_val = self.request_id if self.request_id is not None else self.correlation_id
         payload = {
             "jsonrpc": "2.0",
-            "id": str(id_val),
+            "id": self.request_id,
             "result": {
                 "kind": "task",
-                "id": self.correlation_id,
+                "id": self.request_id,
                 "status": {"state": "in_progress", "message": "Forwarded to agent; response will follow via webhook."},
             },
         }
