@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -57,31 +56,22 @@ async def negotiate_subprotocol(
 async def _heartbeat_loop(
     websocket: WebSocket,
     interval: int,
-    timeout: int,
-    last_pong: dict,
     connection_logger,
 ) -> None:
     """
-    Send periodic pings and close the connection if pong is not received in time.
+    Send periodic pings to keep the connection alive through proxies.
+
+    If the client sends {"type": "pong"}, it's handled in the message loop
+    (updates last_pong timestamp) but is not required.
 
     Args:
         websocket: The WebSocket connection.
         interval: Seconds between pings.
-        timeout: Seconds to wait for pong before closing.
-        last_pong: Mutable dict with key "t" holding the monotonic timestamp of the last pong.
         connection_logger: Logger bound to this connection.
     """
     try:
         while True:
             await asyncio.sleep(interval)
-            elapsed_since_pong = time.monotonic() - last_pong["t"]
-            if elapsed_since_pong > interval + timeout:
-                connection_logger.warning(
-                    "heartbeat_pong_timeout",
-                    elapsed_seconds=round(elapsed_since_pong, 1),
-                )
-                await websocket.close(code=1001, reason="Pong timeout")
-                return
             await websocket.send_text(PING_MESSAGE)
             connection_logger.debug("heartbeat_ping_sent")
     except Exception:
@@ -122,13 +112,10 @@ async def handle_connection(
         subprotocol=subprotocol,
     )
 
-    last_pong: dict[str, float] = {"t": time.monotonic()}
     heartbeat_task = asyncio.create_task(
         _heartbeat_loop(
             websocket=websocket,
             interval=settings.heartbeat_interval_seconds,
-            timeout=settings.heartbeat_timeout_seconds,
-            last_pong=last_pong,
             connection_logger=connection_logger,
         )
     )
@@ -137,13 +124,12 @@ async def handle_connection(
         while True:
             raw_message = await websocket.receive_text()
 
-            # Handle pong from client — update timestamp and skip processing
+            # Handle pong from client — acknowledge and skip processing
             stripped = raw_message.strip()
             if stripped.startswith("{"):
                 try:
                     maybe_pong = json.loads(stripped)
                     if isinstance(maybe_pong, dict) and maybe_pong.get("type") == "pong":
-                        last_pong["t"] = time.monotonic()
                         connection_logger.debug("heartbeat_pong_received")
                         continue
                 except (json.JSONDecodeError, KeyError):
