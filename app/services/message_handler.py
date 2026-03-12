@@ -8,7 +8,7 @@ import structlog
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.core.correlation_store import CorrelationStore
+from app.core.correlation_store import CorrelationStore, RedisCorrelationStore
 from app.core.response_router import ResponseRouter
 from app.core.session_store import InMemorySessionStore, RedisSessionStore
 from app.logging.setup import bind_message_context
@@ -22,7 +22,6 @@ from app.models.messages import PAYLOAD_MODELS, IncomingMessage
 from app.models.responses import (
     A2AErrorDetail,
     A2AErrorResponse,
-    AsyncAcceptedResponse,
     OutgoingResponse,
     UIResponse,
 )
@@ -49,7 +48,7 @@ class MessageHandler:
         session_store: InMemorySessionStore | RedisSessionStore,
         logger: structlog.BoundLogger,
         settings: Settings | None = None,
-        correlation_store: CorrelationStore | None = None,
+        correlation_store: CorrelationStore | RedisCorrelationStore | None = None,
         agent_client: AgentClient | None = None,
     ) -> None:
         self._router = router
@@ -64,7 +63,7 @@ class MessageHandler:
         self,
         raw_message: str,
         connection_id: str | None = None,
-    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a raw WebSocket message.
         
@@ -222,7 +221,7 @@ class MessageHandler:
         self,
         a2a_request: A2ASendMessageRequest,
         connection_id: str | None = None,
-    ) -> UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> UIResponse | A2AErrorResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler or forward to orchestrator."""
         query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat = extract_a2a_ids_and_query(
             a2a_request
@@ -330,9 +329,7 @@ class MessageHandler:
                 connection_id=connection_id,
                 agent_accepted=ok,
             )
-            return AsyncAcceptedResponse(
-                request_id=request_id_str,
-            )
+            return None
 
         bind_message_context(
             message_type="a2a",
@@ -378,7 +375,7 @@ class MessageHandler:
         raw_message: str,
         connection_id: str,
         subprotocol: str | None = None,
-    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | AsyncAcceptedResponse:
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a message with additional connection context.
 

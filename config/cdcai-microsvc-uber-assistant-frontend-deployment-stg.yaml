@@ -59,6 +59,13 @@ data:
   UA_WS_ASYNC_FLOW_ENABLED: "true"
   UA_WS_AGENT_BASE_URL: "http://cdcai-microsvc-uber-assistant-orchestration-agent-svc.ns-qry-aiml-stg-api.svc.cluster.local:8006"
 
+  # WebSocket heartbeat
+  UA_WS_HEARTBEAT_INTERVAL_SECONDS: "20"
+  UA_WS_HEARTBEAT_TIMEOUT_SECONDS: "10"
+
+  # Async response timeout
+  UA_WS_ASYNC_RESPONSE_TIMEOUT_SECONDS: "60"
+
   # Redis session persistence (optional: set SESSION_PERSISTENCE_BACKEND to "redis" to enable)
   UA_WS_REDIS_HOST: "10.68.81.4"
   UA_WS_REDIS_PORT: "6397"

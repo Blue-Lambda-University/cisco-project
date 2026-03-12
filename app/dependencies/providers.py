@@ -8,7 +8,7 @@ from fastapi import Depends
 
 from app.config import Settings
 from app.core.connection_manager import ConnectionManager
-from app.core.correlation_store import CorrelationStore
+from app.core.correlation_store import CorrelationStore, RedisCorrelationStore
 from app.core.latency_simulator import LatencyConfig, LatencySimulator
 from app.core.response_router import ResponseRouter
 from app.core.session_store import InMemorySessionStore, RedisSessionStore
@@ -27,7 +27,7 @@ _latency_simulator: LatencySimulator | None = None
 _response_router: ResponseRouter | None = None
 _a2a_handler: A2AHandler | None = None
 _session_store: InMemorySessionStore | RedisSessionStore | None = None
-_correlation_store: CorrelationStore | None = None
+_correlation_store: CorrelationStore | RedisCorrelationStore | None = None
 _agent_client: AgentClient | None = None
 
 
@@ -248,11 +248,22 @@ def get_session_store(
     return _session_store
 
 
-def get_correlation_store() -> CorrelationStore:
-    """Get or create the singleton CorrelationStore (in-memory)."""
+def get_correlation_store(
+    settings: Settings | None = None,
+) -> CorrelationStore | RedisCorrelationStore:
+    """Get or create the singleton CorrelationStore (in-memory or Redis)."""
     global _correlation_store
     if _correlation_store is None:
-        _correlation_store = CorrelationStore()
+        if settings is None:
+            settings = get_settings()
+        if settings.session_persistence_backend == "redis":
+            redis_url = f"redis://{settings.redis_host}:{settings.redis_port}/{settings.redis_db}"
+            _correlation_store = RedisCorrelationStore(
+                redis_url=redis_url,
+                auto_expire_seconds=settings.async_response_timeout_seconds * 2,
+            )
+        else:
+            _correlation_store = CorrelationStore()
     return _correlation_store
 
 
@@ -276,7 +287,7 @@ def get_message_handler(
     ],
     logger: Annotated[structlog.BoundLogger, Depends(get_logger_dependency)],
     settings: Annotated[Settings, Depends(get_settings)],
-    correlation_store: Annotated[CorrelationStore, Depends(get_correlation_store)],
+    correlation_store: Annotated[CorrelationStore | RedisCorrelationStore, Depends(get_correlation_store)],
     agent_client: Annotated[AgentClient | None, Depends(get_agent_client)],
 ) -> MessageHandler:
     """

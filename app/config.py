@@ -126,6 +126,25 @@ class Settings(BaseSettings):
         description="Path for async response webhook (appended to webhook_base_url)",
     )
 
+    # WebSocket heartbeat
+    heartbeat_interval_seconds: int = Field(
+        default=20,
+        ge=5,
+        description="Seconds between server-sent ping messages per connection",
+    )
+    heartbeat_timeout_seconds: int = Field(
+        default=10,
+        ge=2,
+        description="Seconds to wait for pong before closing the connection",
+    )
+
+    # Async response timeout
+    async_response_timeout_seconds: int = Field(
+        default=60,
+        ge=10,
+        description="Max seconds to wait for orchestrator webhook callback before sending timeout error to UI",
+    )
+
     # Logging configuration
     log_level: str = Field(
         default="INFO",

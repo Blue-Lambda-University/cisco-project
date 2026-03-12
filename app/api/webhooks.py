@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.core.connection_manager import ConnectionManager
-from app.core.correlation_store import CorrelationStore
+from app.core.correlation_store import CorrelationStore, RedisCorrelationStore
 from app.dependencies.providers import (
     ConnectionManagerDep,
     get_a2a_handler,
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/ws", tags=["webhooks"])
 logger = get_logger()
 
 
-def get_correlation_store_dep() -> CorrelationStore:
+def get_correlation_store_dep() -> CorrelationStore | RedisCorrelationStore:
     """Return the singleton correlation store."""
     return get_correlation_store()
 
@@ -28,7 +28,7 @@ def get_correlation_store_dep() -> CorrelationStore:
 async def _handle_async_response(
     request_id: str,
     body: WebhookIncomingBody,
-    correlation_store: CorrelationStore,
+    correlation_store: CorrelationStore | RedisCorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
 ) -> tuple[bool, str]:
@@ -75,7 +75,7 @@ async def _handle_async_response(
 @router.post("/async/response")
 async def webhook_async_response(
     body: WebhookIncomingBody,
-    correlation_store: Annotated[CorrelationStore, Depends(get_correlation_store)],
+    correlation_store: Annotated[CorrelationStore | RedisCorrelationStore, Depends(get_correlation_store)],
     connection_manager: ConnectionManagerDep,
     a2a_handler: Annotated[A2AHandler, Depends(get_a2a_handler)],
 ) -> JSONResponse:

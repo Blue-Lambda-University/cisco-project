@@ -1,21 +1,29 @@
-"""WebSocket endpoint for the mock server."""
+"""WebSocket endpoint with server-side heartbeat."""
+
+import asyncio
+import json
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.config import Settings
 from app.core.connection_manager import ConnectionManager
 from app.dependencies.providers import (
     ConnectionManagerDep,
     MessageHandlerDep,
     SettingsDep,
+    get_correlation_store,
 )
 from app.logging.setup import bind_connection_context, clear_context, get_logger
 from app.models.enums import ErrorCode
-from app.models.responses import AsyncAcceptedResponse, UIResponse
+from app.models.responses import UIResponse
 from app.services.message_handler import MessageHandler
 
 router = APIRouter(tags=["websocket"])
 
 logger = get_logger()
+
+PING_MESSAGE = json.dumps({"type": "ping"})
 
 
 async def negotiate_subprotocol(
@@ -32,7 +40,6 @@ async def negotiate_subprotocol(
     Returns:
         The selected subprotocol or None if no match.
     """
-    # Get client's requested protocols from headers
     client_protocols_header = websocket.headers.get("sec-websocket-protocol", "")
     client_protocols = [
         p.strip() 
@@ -40,7 +47,6 @@ async def negotiate_subprotocol(
         if p.strip()
     ]
     
-    # Find first matching protocol
     for protocol in client_protocols:
         if protocol in supported_protocols:
             return protocol
@@ -48,11 +54,46 @@ async def negotiate_subprotocol(
     return None
 
 
+async def _heartbeat_loop(
+    websocket: WebSocket,
+    interval: int,
+    timeout: int,
+    last_pong: dict,
+    connection_logger,
+) -> None:
+    """
+    Send periodic pings and close the connection if pong is not received in time.
+
+    Args:
+        websocket: The WebSocket connection.
+        interval: Seconds between pings.
+        timeout: Seconds to wait for pong before closing.
+        last_pong: Mutable dict with key "t" holding the monotonic timestamp of the last pong.
+        connection_logger: Logger bound to this connection.
+    """
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            elapsed_since_pong = time.monotonic() - last_pong["t"]
+            if elapsed_since_pong > interval + timeout:
+                connection_logger.warning(
+                    "heartbeat_pong_timeout",
+                    elapsed_seconds=round(elapsed_since_pong, 1),
+                )
+                await websocket.close(code=1001, reason="Pong timeout")
+                return
+            await websocket.send_text(PING_MESSAGE)
+            connection_logger.debug("heartbeat_ping_sent")
+    except Exception:
+        pass
+
+
 async def handle_connection(
     websocket: WebSocket,
     connection_manager: ConnectionManager,
     message_handler: MessageHandler,
     subprotocol: str | None,
+    settings: Settings,
 ) -> None:
     """
     Handle a WebSocket connection lifecycle.
@@ -62,14 +103,13 @@ async def handle_connection(
         connection_manager: Connection manager instance.
         message_handler: Message handler instance.
         subprotocol: Negotiated subprotocol.
+        settings: Application settings (for heartbeat config).
     """
-    # Register connection
     connection_info = await connection_manager.connect(
         websocket=websocket,
         subprotocol=subprotocol,
     )
     
-    # Bind connection context for logging
     bind_connection_context(
         connection_id=connection_info.connection_id,
         client_ip=connection_info.client_ip,
@@ -81,14 +121,34 @@ async def handle_connection(
         client_ip=connection_info.client_ip,
         subprotocol=subprotocol,
     )
+
+    last_pong: dict[str, float] = {"t": time.monotonic()}
+    heartbeat_task = asyncio.create_task(
+        _heartbeat_loop(
+            websocket=websocket,
+            interval=settings.heartbeat_interval_seconds,
+            timeout=settings.heartbeat_timeout_seconds,
+            last_pong=last_pong,
+            connection_logger=connection_logger,
+        )
+    )
     
     try:
-        # Message handling loop
         while True:
-            # Receive message
             raw_message = await websocket.receive_text()
+
+            # Handle pong from client — update timestamp and skip processing
+            stripped = raw_message.strip()
+            if stripped.startswith("{"):
+                try:
+                    maybe_pong = json.loads(stripped)
+                    if isinstance(maybe_pong, dict) and maybe_pong.get("type") == "pong":
+                        last_pong["t"] = time.monotonic()
+                        connection_logger.debug("heartbeat_pong_received")
+                        continue
+                except (json.JSONDecodeError, KeyError):
+                    pass
             
-            # Update connection stats
             connection_manager.update_message_count(connection_info.connection_id)
             
             connection_logger.debug(
@@ -96,31 +156,28 @@ async def handle_connection(
                 message_length=len(raw_message),
             )
             
-            # Handle message
             response = await message_handler.handle_with_context(
                 raw_message=raw_message,
                 connection_id=connection_info.connection_id,
                 subprotocol=subprotocol,
             )
             
-            # Send response
-            if isinstance(response, AsyncAcceptedResponse):
-                response_json = response.to_a2a_in_progress_json()
-                connection_logger.debug("a2a_response_sent", response_type="async_accepted")
-            else:
-                response_json = response.model_dump_json(by_alias=True)
+            if response is None:
+                connection_logger.debug("a2a_response_deferred", response_type="async_forwarded")
+                continue
 
-            if not isinstance(response, AsyncAcceptedResponse):
-                if isinstance(response, UIResponse):
-                    connection_logger.debug("a2a_response_sent", response_type="ui_response")
-                elif hasattr(response, "jsonrpc") and hasattr(response, "error"):
-                    connection_logger.debug("a2a_response_sent", response_type="a2a_error")
-                elif hasattr(response, "type"):
-                    connection_logger.debug(
-                        "response_sent",
-                        response_type=response.type,
-                        latency_ms=response.metadata.latency_ms,
-                    )
+            response_json = response.model_dump_json(by_alias=True)
+
+            if isinstance(response, UIResponse):
+                connection_logger.debug("a2a_response_sent", response_type="ui_response")
+            elif hasattr(response, "jsonrpc") and hasattr(response, "error"):
+                connection_logger.debug("a2a_response_sent", response_type="a2a_error")
+            elif hasattr(response, "type"):
+                connection_logger.debug(
+                    "response_sent",
+                    response_type=response.type,
+                    latency_ms=response.metadata.latency_ms,
+                )
             
             await websocket.send_text(response_json)
             
@@ -135,7 +192,6 @@ async def handle_connection(
             error=str(e),
             error_type=type(e).__name__,
         )
-        # Try to send error response before closing
         try:
             error_response = message_handler._router.create_error_response(
                 code=ErrorCode.INTERNAL_ERROR,
@@ -143,9 +199,16 @@ async def handle_connection(
             )
             await websocket.send_text(error_response.model_dump_json())
         except Exception:
-            pass  # Connection might be closed
+            pass
     finally:
-        # Clean up
+        heartbeat_task.cancel()
+        correlation_store = get_correlation_store()
+        orphaned = correlation_store.remove_by_connection(connection_info.connection_id)
+        if orphaned:
+            connection_logger.info(
+                "orphaned_correlation_entries_removed",
+                request_ids=orphaned,
+            )
         await connection_manager.disconnect(connection_info.connection_id)
         clear_context()
 
@@ -163,12 +226,12 @@ async def websocket_endpoint(
     Handles WebSocket connections with:
     - Subprotocol negotiation
     - Connection capacity checking
+    - Server-side heartbeat (ping/pong)
     - Message handling loop
     - Graceful disconnection
     """
     ws_logger = logger.bind(endpoint="/ciscoua/api/v1/ws")
     
-    # Check capacity before accepting
     if connection_manager.is_at_capacity():
         ws_logger.warning(
             "connection_rejected",
@@ -179,7 +242,6 @@ async def websocket_endpoint(
         await websocket.close(code=1013, reason="Server at capacity")
         return
     
-    # Negotiate subprotocol
     subprotocol = await negotiate_subprotocol(
         websocket=websocket,
         supported_protocols=settings.supported_subprotocols,
@@ -191,15 +253,14 @@ async def websocket_endpoint(
         supported=settings.supported_subprotocols,
     )
     
-    # Accept connection with subprotocol
     await websocket.accept(subprotocol=subprotocol)
     
-    # Handle connection
     await handle_connection(
         websocket=websocket,
         connection_manager=connection_manager,
         message_handler=message_handler,
         subprotocol=subprotocol,
+        settings=settings,
     )
 
 
@@ -219,7 +280,6 @@ async def websocket_endpoint_with_client_id(
     """
     ws_logger = logger.bind(endpoint="/ciscoua/api/v1/ws/{client_id}", client_id=client_id)
     
-    # Check capacity
     if connection_manager.is_at_capacity():
         ws_logger.warning(
             "connection_rejected",
@@ -228,13 +288,11 @@ async def websocket_endpoint_with_client_id(
         await websocket.close(code=1013, reason="Server at capacity")
         return
     
-    # Negotiate subprotocol
     subprotocol = await negotiate_subprotocol(
         websocket=websocket,
         supported_protocols=settings.supported_subprotocols,
     )
     
-    # Accept connection
     await websocket.accept(subprotocol=subprotocol)
     
     ws_logger.info(
@@ -243,10 +301,10 @@ async def websocket_endpoint_with_client_id(
         subprotocol=subprotocol,
     )
     
-    # Handle connection
     await handle_connection(
         websocket=websocket,
         connection_manager=connection_manager,
         message_handler=message_handler,
         subprotocol=subprotocol,
+        settings=settings,
     )
