@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebSocket Message Rate Throttling — Algorithm Options</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+    line-height: 1.6;
+    color: #1a1a2e;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    background: #f8f9fa;
+  }
+  h1 {
+    font-size: 1.8rem;
+    border-bottom: 3px solid #0f3460;
+    padding-bottom: 12px;
+    color: #0f3460;
+  }
+  h2 {
+    font-size: 1.4rem;
+    color: #16213e;
+    margin-top: 36px;
+    border-left: 4px solid #0f3460;
+    padding-left: 12px;
+  }
+  h2.recommended {
+    border-left-color: #27ae60;
+  }
+  .badge {
+    display: inline-block;
+    background: #27ae60;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  p, li { font-size: 0.95rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.9rem;
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  th {
+    background: #0f3460;
+    color: #fff;
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+  }
+  td {
+    padding: 8px 14px;
+    border-bottom: 1px solid #e9ecef;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  .rejected {
+    color: #e74c3c;
+    font-weight: 700;
+  }
+  .allowed {
+    color: #27ae60;
+    font-weight: 600;
+  }
+  .pros-cons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .pros, .cons {
+    background: #fff;
+    border-radius: 6px;
+    padding: 14px 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .pros { border-top: 3px solid #27ae60; }
+  .cons { border-top: 3px solid #e74c3c; }
+  .pros h4 { color: #27ae60; margin: 0 0 8px 0; }
+  .cons h4 { color: #e74c3c; margin: 0 0 8px 0; }
+  .pros ul, .cons ul { margin: 0; padding-left: 18px; }
+  .pros li, .cons li { font-size: 0.9rem; margin-bottom: 4px; }
+  pre {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 16px 20px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .key { color: #82aaff; }
+  .str { color: #c3e88d; }
+  .num { color: #f78c6c; }
+  .section-divider {
+    border: none;
+    border-top: 2px solid #dee2e6;
+    margin: 32px 0;
+  }
+  .how-it-works {
+    background: #fff;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-left: 3px solid #3498db;
+  }
+  .comparison-yes {
+    background: #d4edda;
+    color: #155724;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  .comparison-no {
+    color: #856404;
+  }
+  .comparison-bad {
+    color: #721c24;
+  }
+  .config-table td:first-child {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.82rem;
+    color: #0f3460;
+  }
+</style>
+</head>
+<body>
+
+<h1>WebSocket Message Rate Throttling — Algorithm Options</h1>
+
+<h2>Problem</h2>
+<p>Once a WebSocket connection is established, a client can send <strong>unlimited messages</strong> at any rate. This can overwhelm the orchestrator, exhaust server resources, or degrade service for other users.</p>
+
+<h2>Goal</h2>
+<p>Limit how many messages a client can send per connection per time window. When exceeded, <strong>reject the message with an error</strong> but keep the connection open.</p>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- OPTION 1 -->
+<!-- ============================================================ -->
+
+<h2 class="recommended">Option 1: Token Bucket <span class="badge">I will go for this</span></h2>
+
+<div class="how-it-works">
+  <strong>How it works:</strong> Each connection gets a "bucket" with a fixed token capacity. Tokens refill at a steady rate. Each message consumes 1 token. When empty, messages are rejected until tokens refill.
+</div>
+
+<p><strong>Example:</strong> Bucket capacity = 5, refill rate = 1 token / 3 seconds (= 20/min)</p>
+
+<table>
+  <tr><th>Time</th><th>Action</th><th>Tokens</th></tr>
+  <tr><td>t=0s</td><td>User sends msg 1</td><td>4</td></tr>
+  <tr><td>t=0s</td><td>User sends msg 2</td><td>3</td></tr>
+  <tr><td>t=0s</td><td>User sends msg 3</td><td>2</td></tr>
+  <tr><td>t=0s</td><td>User sends msg 4</td><td>1</td></tr>
+  <tr><td>t=0s</td><td>User sends msg 5</td><td>0</td></tr>
+  <tr><td>t=0s</td><td>User sends msg 6</td><td class="rejected">REJECTED (wait ~3s)</td></tr>
+  <tr><td>t=3s</td><td>1 token refills</td><td>1</td></tr>
+  <tr><td>t=3s</td><td>User sends msg 7</td><td class="allowed">0 (allowed)</td></tr>
+</table>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Allows natural burst patterns (send a few quickly, then pause)</li>
+      <li>Smooth and predictable average rate</li>
+      <li>Simple implementation (~30 lines)</li>
+      <li>No external dependencies</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li>Slightly more complex than fixed window</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- OPTION 2 -->
+<!-- ============================================================ -->
+
+<h2>Option 2: Sliding Window</h2>
+
+<div class="how-it-works">
+  <strong>How it works:</strong> Track timestamps of all messages within a rolling time window (e.g., last 60 seconds). If the count exceeds the limit, reject.
+</div>
+
+<p><strong>Example:</strong> Max 20 messages per 60-second window</p>
+
+<table>
+  <tr><th>Time</th><th>Messages in last 60s</th><th>Action</th></tr>
+  <tr><td>t=0s</td><td>0</td><td class="allowed">Allowed</td></tr>
+  <tr><td>t=30s</td><td>15</td><td class="allowed">Allowed</td></tr>
+  <tr><td>t=45s</td><td>20</td><td class="allowed">Allowed</td></tr>
+  <tr><td>t=46s</td><td>21</td><td class="rejected">REJECTED</td></tr>
+  <tr><td>t=61s</td><td>20 (oldest dropped off)</td><td class="allowed">Allowed again</td></tr>
+</table>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Very precise — no boundary burst issues</li>
+      <li>Accurate count at any point in time</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li>Higher memory usage (stores every message timestamp)</li>
+      <li>More complex than token bucket</li>
+      <li>Overkill for per-connection rate limiting</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- OPTION 3 -->
+<!-- ============================================================ -->
+
+<h2>Option 3: Fixed Window</h2>
+
+<div class="how-it-works">
+  <strong>How it works:</strong> Count messages in fixed time intervals (e.g., per minute). Reset counter at the start of each window.
+</div>
+
+<p><strong>Example:</strong> Max 20 messages per minute</p>
+
+<table>
+  <tr><th>Time</th><th>Window</th><th>Count</th><th>Action</th></tr>
+  <tr><td>t=0:00</td><td>Window 1 starts</td><td>0</td><td></td></tr>
+  <tr><td>t=0:55</td><td>Window 1</td><td>18</td><td class="allowed">Allowed</td></tr>
+  <tr><td>t=0:59</td><td>Window 1</td><td>20</td><td class="allowed">Allowed</td></tr>
+  <tr><td>t=0:59</td><td>Window 1</td><td>21</td><td class="rejected">REJECTED</td></tr>
+  <tr><td>t=1:00</td><td>Window 2 starts</td><td>0</td><td>Counter reset</td></tr>
+  <tr><td>t=1:00</td><td>Window 2</td><td>1</td><td class="allowed">Allowed</td></tr>
+</table>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Simplest to implement</li>
+      <li>Lowest memory usage (just a counter + timestamp)</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li><strong>Boundary burst problem</strong> — client can send 20 msgs at t=0:59 and 20 more at t=1:00 (40 in 2 seconds)</li>
+      <li>Less fair/predictable than token bucket</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- OPTION 4 -->
+<!-- ============================================================ -->
+
+<h2>Option 4: Leaky Bucket (FIFO Queue)</h2>
+
+<div class="how-it-works">
+  <strong>How it works:</strong> Incoming messages are placed in a queue. Messages are processed ("leaked") at a fixed rate. If the queue is full, new messages are dropped.
+</div>
+
+<p><strong>Example:</strong> Queue size = 5, processing rate = 1 message / 3 seconds</p>
+
+<table>
+  <tr><th>Time</th><th>Action</th><th>Queue</th></tr>
+  <tr><td>t=0s</td><td>5 messages arrive</td><td>[1, 2, 3, 4, 5]</td></tr>
+  <tr><td>t=0s</td><td>6th message</td><td class="rejected">DROPPED (queue full)</td></tr>
+  <tr><td>t=3s</td><td>Message 1 processed</td><td>[2, 3, 4, 5]</td></tr>
+  <tr><td>t=3s</td><td>New message accepted</td><td>[2, 3, 4, 5, 6]</td></tr>
+</table>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Pros</h4>
+    <ul>
+      <li>Very smooth, constant output rate</li>
+      <li>Good for protecting downstream systems</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Cons</h4>
+    <ul>
+      <li>Adds latency (messages wait in queue)</li>
+      <li>More complex — changes the processing model</li>
+      <li>Users experience delayed responses</li>
+    </ul>
+  </div>
+</div>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- COMPARISON -->
+<!-- ============================================================ -->
+
+<h2>Comparison</h2>
+
+<table>
+  <tr>
+    <th></th>
+    <th>Token Bucket</th>
+    <th>Sliding Window</th>
+    <th>Fixed Window</th>
+    <th>Leaky Bucket</th>
+  </tr>
+  <tr>
+    <td><strong>Burst handling</strong></td>
+    <td><span class="comparison-yes">Controlled bursts</span></td>
+    <td>No bursts</td>
+    <td class="comparison-bad">Boundary burst problem</td>
+    <td>No bursts</td>
+  </tr>
+  <tr>
+    <td><strong>Complexity</strong></td>
+    <td>Low</td>
+    <td>Medium</td>
+    <td>Very low</td>
+    <td>High</td>
+  </tr>
+  <tr>
+    <td><strong>Memory</strong></td>
+    <td>O(1)</td>
+    <td>O(n) per window</td>
+    <td>O(1)</td>
+    <td>O(queue size)</td>
+  </tr>
+  <tr>
+    <td><strong>Latency added</strong></td>
+    <td>None</td>
+    <td>None</td>
+    <td>None</td>
+    <td class="comparison-bad">Yes</td>
+  </tr>
+  <tr>
+    <td><strong>Accuracy</strong></td>
+    <td>Good</td>
+    <td>Best</td>
+    <td>Weakest</td>
+    <td>Good</td>
+  </tr>
+  <tr>
+    <td><strong>Best for chat</strong></td>
+    <td><span class="comparison-yes">Yes</span></td>
+    <td class="comparison-no">Overkill</td>
+    <td class="comparison-bad">Exploitable</td>
+    <td class="comparison-bad">Adds latency</td>
+  </tr>
+</table>
+
+<hr class="section-divider">
+
+<!-- ============================================================ -->
+<!-- RECOMMENDATION -->
+<!-- ============================================================ -->
+
+
+<h3>Proposed Error Response to UI</h3>
+
+<pre>{
+  <span class="key">"jsonrpc"</span>: <span class="str">"2.0"</span>,
+  <span class="key">"id"</span>: null,
+  <span class="key">"error"</span>: {
+    <span class="key">"code"</span>: <span class="num">-32429</span>,
+    <span class="key">"message"</span>: <span class="str">"Rate limit exceeded"</span>,
+    <span class="key">"data"</span>: {
+      <span class="key">"retryAfterMs"</span>: <span class="num">3000</span>
+    }
+  }
+}</pre>
+
+</body>
+</html>
