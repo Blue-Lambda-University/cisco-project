@@ -1,0 +1,24 @@
+{
+  "id": "4fb7a645-1c1c-45ba-aae0-8dee829d9464",
+  "jsonrpc": "2.0",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "parts": [
+        {
+          "kind": "text",
+          "text": "hi"
+        }
+      ],
+      "role": "user"
+    },
+    "metadata": {
+      "CP_GUTC_Id": "23.201.106.229.8698431754512486932",
+      "conversationId": "313c4f51-97c6-4e75-83d4-911eed3d1f90",
+      "referrer": "https://localhost.cisco.com:8443/chat.html?isAuthenticated=true",
+      "sessionId": null,
+      "timestamp": "2026-03-11T19:05:08.519Z",
+      "isFirstChat": true
+    }
+  }
+}
