@@ -66,6 +66,10 @@ data:
   # Async response timeout
   UA_WS_ASYNC_RESPONSE_TIMEOUT_SECONDS: "60"
 
+  # Rate limiting (per connection)
+  UA_WS_RATE_LIMIT_MESSAGES_PER_MINUTE: "10"
+  UA_WS_RATE_LIMIT_BURST_SIZE: "5"
+
   # Redis session persistence (optional: set SESSION_PERSISTENCE_BACKEND to "redis" to enable)
   UA_WS_REDIS_HOST: "10.68.81.4"
   UA_WS_REDIS_PORT: "6397"

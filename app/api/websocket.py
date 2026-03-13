@@ -7,6 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import Settings
 from app.core.connection_manager import ConnectionManager
+from app.core.rate_limiter import TokenBucket
 from app.dependencies.providers import (
     ConnectionManagerDep,
     MessageHandlerDep,
@@ -23,6 +24,20 @@ router = APIRouter(tags=["websocket"])
 logger = get_logger()
 
 PING_MESSAGE = json.dumps({"type": "ping"})
+
+RATE_LIMIT_ERROR_CODE = -32429
+
+
+def _build_rate_limit_error(retry_after_ms: int) -> str:
+    return json.dumps({
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {
+            "code": RATE_LIMIT_ERROR_CODE,
+            "message": "Rate limit exceeded",
+            "data": {"retryAfterMs": retry_after_ms},
+        },
+    })
 
 
 async def negotiate_subprotocol(
@@ -112,6 +127,12 @@ async def handle_connection(
         subprotocol=subprotocol,
     )
 
+    rate_per_second = settings.rate_limit_messages_per_minute / 60.0
+    rate_limiter = TokenBucket(
+        rate_per_second=rate_per_second,
+        burst_size=settings.rate_limit_burst_size,
+    )
+
     heartbeat_task = asyncio.create_task(
         _heartbeat_loop(
             websocket=websocket,
@@ -134,6 +155,17 @@ async def handle_connection(
                         continue
                 except (json.JSONDecodeError, KeyError):
                     pass
+
+            # Rate limit check
+            allowed, wait_seconds = rate_limiter.consume()
+            if not allowed:
+                retry_after_ms = int(wait_seconds * 1000)
+                connection_logger.warning(
+                    "rate_limit_exceeded",
+                    retry_after_ms=retry_after_ms,
+                )
+                await websocket.send_text(_build_rate_limit_error(retry_after_ms))
+                continue
             
             connection_manager.update_message_count(connection_info.connection_id)
             

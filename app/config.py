@@ -145,6 +145,18 @@ class Settings(BaseSettings):
         description="Max seconds to wait for orchestrator webhook callback before sending timeout error to UI",
     )
 
+    # Rate limiting (per connection)
+    rate_limit_messages_per_minute: int = Field(
+        default=10,
+        ge=1,
+        description="Max messages per minute per WebSocket connection (average rate)",
+    )
+    rate_limit_burst_size: int = Field(
+        default=5,
+        ge=1,
+        description="Max burst of messages allowed before throttling kicks in",
+    )
+
     # Logging configuration
     log_level: str = Field(
         default="INFO",
