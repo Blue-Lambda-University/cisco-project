@@ -7,6 +7,8 @@ Mapping:
 - We use requestId to look up the correlation store and deliver the response.
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -48,7 +50,7 @@ class WebhookIncomingBody(BaseModel):
     """
 
     request_id: str | None = Field(default=None, alias="requestId", description="Request id — used to look up the correlation store")
-    content: str | None = Field(default=None, description="Response text / content for the user")
+    content: Any = Field(default=None, description="Subagent output passed through as-is (string, dict, list, or null)")
     session_id: str | None = Field(default=None, alias="sessionId", description="Session id to echo in result")
     context_id: str | None = Field(default=None, alias="contextId", description="Conversation/context id to echo in result")
     cp_gutc_id: str | None = Field(
