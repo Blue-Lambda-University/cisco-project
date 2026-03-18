@@ -64,7 +64,7 @@ def parse_a2a_request(data: dict[str, Any]) -> A2ASendMessageRequest | None:
     if data.get("jsonrpc") != "2.0":
         return None
     method = data.get("method")
-    if method is not None and method not in ("message/stream", "agent/sendMessage", "SendMessage"):
+    if method is not None and method not in ("message/stream", "message/send", "agent/sendMessage", "SendMessage"):
         return None
     params = data.get("params")
     if not isinstance(params, dict) or "message" not in params:

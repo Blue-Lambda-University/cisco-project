@@ -96,7 +96,7 @@ class MessageHandler:
         params = data.get("params")
         is_a2a_style = (
             data.get("jsonrpc") == "2.0"
-            and (method is None or method in ("message/stream", "agent/sendMessage", "SendMessage"))
+            and (method is None or method in ("message/stream", "message/send", "agent/sendMessage", "SendMessage"))
             and isinstance(params, dict)
             and "message" in params
         )

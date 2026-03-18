@@ -140,9 +140,9 @@ class Settings(BaseSettings):
 
     # Async response timeout
     async_response_timeout_seconds: int = Field(
-        default=60,
+        default=1800,
         ge=10,
-        description="Max seconds to wait for orchestrator webhook callback before sending timeout error to UI",
+        description="Max seconds to wait for orchestrator webhook callback before sending timeout error to UI (fixed, not sliding)",
     )
 
     # Connection idle timeout
