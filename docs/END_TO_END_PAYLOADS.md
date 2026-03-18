@@ -6,7 +6,7 @@
 {
   "jsonrpc": "2.0",
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "method": "message/stream",
+  "method": "agent/sendMessage",
   "params": {
     "message": {
       "role": "user",
@@ -69,7 +69,7 @@ No orchestrator call — returned immediately:
 {
   "jsonrpc": "2.0",
   "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c",
-  "method": "message/stream",
+  "method": "agent/sendMessage",
   "params": {
     "message": {
       "role": "user",
