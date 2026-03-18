@@ -17,22 +17,59 @@ from pydantic import BaseModel, Field
 # -----------------------------------------------------------------------------
 
 
+class OutgoingMessageMetadata(BaseModel):
+    """Metadata embedded inside params.message for the orchestrator (snake_case keys)."""
+
+    user_id: str | None = Field(default=None)
+    conversation_id: str | None = Field(default=None)
+    session_id: str | None = Field(default=None)
+    request_id: str | None = Field(default=None)
+    cp_gutc_id: str | None = Field(default=None)
+    referrer: str | None = Field(default=None)
+
+
+class OutgoingMessage(BaseModel):
+    """The message object inside params, with metadata nested inside."""
+
+    role: str = Field(default="user")
+    parts: list[dict] = Field(default_factory=list)
+    message_id: str | None = Field(default=None, alias="messageId")
+    context_id: str | None = Field(default=None, alias="contextId")
+    metadata: OutgoingMessageMetadata | None = Field(default=None)
+
+    model_config = {"populate_by_name": True}
+
+
+class OutgoingConfiguration(BaseModel):
+    """Configuration block sent to the orchestrator."""
+
+    accepted_output_modes: list[str] = Field(
+        default_factory=lambda: ["text"],
+        alias="acceptedOutputModes",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class OutgoingParams(BaseModel):
+    """params block of the JSON-RPC payload to the orchestrator."""
+
+    message: OutgoingMessage
+    configuration: OutgoingConfiguration = Field(default_factory=OutgoingConfiguration)
+
+
 class WebhookOutgoingBody(BaseModel):
     """
-    Payload sent to the orchestrator when forwarding a user message.
-    JSON keys use camelCase to match UI (sessionId, requestId, etc.).
+    Full JSON-RPC 2.0 payload sent to the orchestrator (POST /a2a/).
+
+    Structure matches what the orchestrator expects:
+      { jsonrpc, id, method, params: { message: { ..., metadata: {...} }, configuration } }
     """
 
-    message: dict = Field(default_factory=dict, description="User message (e.g. role, parts)")
-    request_id: str | None = Field(default=None, alias="requestId", description="Request id from UI — used as the correlation key")
-    session_id: str | None = Field(default=None, alias="sessionId", description="Session id from UI")
-    context_id: str | None = Field(default=None, alias="contextId", description="Conversation/context id from UI")
-    cp_gutc_id: str | None = Field(
-        default=None,
-        alias="CP_GUTC_Id",
-        description="CP GUTC Id from UI (orchestrator echoes back in webhook)",
-    )
-    referrer: str | None = Field(default=None, description="Referrer from UI (orchestrator echoes back in webhook)")
+    jsonrpc: str = Field(default="2.0")
+    id: str | None = Field(default=None)
+    method: str = Field(default="message/stream")
+    params: OutgoingParams
 
     model_config = {"populate_by_name": True}
 
@@ -42,22 +79,48 @@ class WebhookOutgoingBody(BaseModel):
 # -----------------------------------------------------------------------------
 
 
-class WebhookIncomingBody(BaseModel):
+class WebhookIncomingInner(BaseModel):
     """
-    Payload received from the orchestrator when they POST to our webhook.
-    JSON keys use camelCase to match UI (sessionId, requestId, etc.).
+    Inner payload from the orchestrator (the fields inside "body" or at root).
     The requestId is used to look up the correlation store.
     """
 
-    request_id: str | None = Field(default=None, alias="requestId", description="Request id — used to look up the correlation store")
-    content: Any = Field(default=None, description="Subagent output passed through as-is (string, dict, list, or null)")
-    session_id: str | None = Field(default=None, alias="sessionId", description="Session id to echo in result")
-    context_id: str | None = Field(default=None, alias="contextId", description="Conversation/context id to echo in result")
-    cp_gutc_id: str | None = Field(
-        default=None,
-        alias="CP_GUTC_Id",
-        description="CP GUTC Id (from UI, echoed back from orchestrator)",
-    )
-    referrer: str | None = Field(default=None, description="Referrer (from UI, echoed back from orchestrator)")
+    request_id: str | None = Field(default=None, alias="requestId")
+    content: Any = Field(default=None, description="Subagent output: string, dict with artifacts, list, or null")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    context_id: str | None = Field(default=None, alias="contextId")
+    cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id")
+    referrer: str | None = Field(default=None)
 
     model_config = {"populate_by_name": True}
+
+
+class WebhookIncomingBody(BaseModel):
+    """
+    Accepts both formats from the orchestrator:
+      - Wrapped:   {"body": {"requestId": ..., "content": ..., ...}}
+      - Unwrapped: {"requestId": ..., "content": ..., ...}
+    """
+
+    body: WebhookIncomingInner | None = Field(default=None)
+    request_id: str | None = Field(default=None, alias="requestId")
+    content: Any = Field(default=None)
+    session_id: str | None = Field(default=None, alias="sessionId")
+    context_id: str | None = Field(default=None, alias="contextId")
+    cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id")
+    referrer: str | None = Field(default=None)
+
+    model_config = {"populate_by_name": True}
+
+    def resolve(self) -> WebhookIncomingInner:
+        """Return the inner payload regardless of which format was used."""
+        if self.body is not None:
+            return self.body
+        return WebhookIncomingInner(
+            request_id=self.request_id,
+            content=self.content,
+            session_id=self.session_id,
+            context_id=self.context_id,
+            cp_gutc_id=self.cp_gutc_id,
+            referrer=self.referrer,
+        )

@@ -145,6 +145,13 @@ class Settings(BaseSettings):
         description="Max seconds to wait for orchestrator webhook callback before sending timeout error to UI",
     )
 
+    # Connection idle timeout
+    connection_idle_timeout_seconds: int = Field(
+        default=1800,
+        ge=60,
+        description="Close WebSocket connections idle for longer than this (seconds). Default 1800 = 30 min.",
+    )
+
     # Rate limiting (per connection)
     rate_limit_messages_per_minute: int = Field(
         default=10,

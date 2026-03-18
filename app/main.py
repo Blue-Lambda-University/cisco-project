@@ -54,6 +54,34 @@ async def _sweep_expired_requests(
             log.exception("correlation_sweep_error")
 
 
+async def _sweep_idle_connections(settings: Settings) -> None:
+    """Background task: periodically close WebSocket connections that have been idle too long."""
+    log = get_logger().bind(component="idle_connection_sweep")
+    timeout = settings.connection_idle_timeout_seconds
+    sweep_interval = max(timeout // 6, 30)
+
+    while True:
+        await asyncio.sleep(sweep_interval)
+        try:
+            from app.core.connection_manager import ConnectionManager
+            cm: ConnectionManager = get_connection_manager(settings)
+            idle_conns = cm.get_idle_connections(timeout)
+            for conn in idle_conns:
+                log.info(
+                    "closing_idle_connection",
+                    connection_id=conn.connection_id,
+                    last_message_at=conn.last_message_at.isoformat() if conn.last_message_at else None,
+                    idle_timeout_seconds=timeout,
+                )
+                await cm.close_connection(
+                    conn.connection_id,
+                    code=1000,
+                    reason="Idle timeout",
+                )
+        except Exception:
+            log.exception("idle_connection_sweep_error")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -73,12 +101,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     sweep_task = asyncio.create_task(
         _sweep_expired_requests(app.state.settings)
     )
+    idle_task = asyncio.create_task(
+        _sweep_idle_connections(app.state.settings)
+    )
 
     yield
 
     sweep_task.cancel()
+    idle_task.cancel()
     try:
         await sweep_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await idle_task
     except asyncio.CancelledError:
         pass
     logger.info("application_shutting_down")

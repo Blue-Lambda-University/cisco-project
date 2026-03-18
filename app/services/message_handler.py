@@ -96,7 +96,7 @@ class MessageHandler:
         params = data.get("params")
         is_a2a_style = (
             data.get("jsonrpc") == "2.0"
-            and (method is None or method in ("agent/sendMessage", "SendMessage"))
+            and (method is None or method in ("message/stream", "agent/sendMessage", "SendMessage"))
             and isinstance(params, dict)
             and "message" in params
         )
@@ -311,15 +311,11 @@ class MessageHandler:
                 referrer=referrer,
                 query_text=query_text,
             )
-            message_payload = {
-                "role": "user",
-                "parts": [{"kind": "text", "text": query_text}],
-            }
             ok = await self._agent_client.send_async(
-                message=message_payload,
+                query_text=query_text,
                 request_id=request_id_str,
                 session_id=session_id,
-                context_id=conversation_id,
+                conversation_id=conversation_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
             )

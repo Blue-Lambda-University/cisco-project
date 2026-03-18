@@ -361,9 +361,39 @@ class A2AHandler:
             a2a_response=a2a_inner,
         )
 
+    @staticmethod
+    def extract_text_from_content(content: Any) -> str:
+        """
+        Extract display text from orchestrator content which may be:
+          - A plain string
+          - A dict with {"status": ..., "artifacts": [{"text": "..."}]}
+          - Any other type (serialised to str as fallback)
+        """
+        if content is None:
+            return "(No content)"
+        if isinstance(content, str):
+            return content or "(No content)"
+        if isinstance(content, dict):
+            artifacts = content.get("artifacts")
+            if isinstance(artifacts, list):
+                texts = [
+                    a.get("text", "") for a in artifacts
+                    if isinstance(a, dict) and a.get("text")
+                ]
+                if texts:
+                    return "\n\n".join(texts)
+            text_field = content.get("text")
+            if isinstance(text_field, str) and text_field:
+                return text_field
+        import json as _json
+        try:
+            return _json.dumps(content)
+        except (TypeError, ValueError):
+            return str(content)
+
     def build_a2a_response_from_content(
         self,
-        text_content: str,
+        content: Any,
         session_id: str | None = None,
         request_id: str | int | None = None,
         context_id: str | None = None,
@@ -373,8 +403,9 @@ class A2AHandler:
         query_text: str | None = None,
     ) -> UIResponse:
         """
-        Build a UIResponse from raw content (e.g. from webhook/orchestrator callback).
+        Build a UIResponse from orchestrator content (string or object).
         """
+        text_content = self.extract_text_from_content(content)
         return self._build_a2a_response(
             text_content=text_content,
             session_id=session_id,

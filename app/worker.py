@@ -10,4 +10,6 @@ class CustomUvicornWorker(UvicornWorker):
         "loop": "uvloop",
         "http": "httptools",
         "access_log": False,
+        "ws_ping_interval": 20,
+        "ws_ping_timeout": 30,
     }

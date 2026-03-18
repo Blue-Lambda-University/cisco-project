@@ -13,7 +13,7 @@ from app.dependencies.providers import (
     get_correlation_store,
 )
 from app.logging.setup import get_logger
-from app.models.webhook_requests import WebhookIncomingBody
+from app.models.webhook_requests import WebhookIncomingBody, WebhookIncomingInner
 from app.services.a2a_handler import A2AHandler
 
 router = APIRouter(prefix="/ws", tags=["webhooks"])
@@ -27,29 +27,28 @@ def get_correlation_store_dep() -> CorrelationStore | RedisCorrelationStore:
 
 async def _handle_async_response(
     request_id: str,
-    body: WebhookIncomingBody,
+    inner: WebhookIncomingInner,
     correlation_store: CorrelationStore | RedisCorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
 ) -> tuple[bool, str]:
     """
-    Look up connection by requestId, build A2A response, send to WebSocket.
+    Look up connection by requestId, build rich UI response, send to WebSocket.
     Returns (success, error_message).
     """
     record = correlation_store.get_and_remove(request_id)
     if record is None:
         return False, "requestId not found or already consumed"
 
-    session_id = body.session_id or record.session_id
-    context_id = body.context_id or record.context_id
+    session_id = inner.session_id or record.session_id
+    context_id = inner.context_id or record.context_id
     conversation_id = record.conversation_id
-    content = body.content or "(No content)"
-    cp_gutc_id = body.cp_gutc_id or record.cp_gutc_id
-    referrer = body.referrer or record.referrer
+    cp_gutc_id = inner.cp_gutc_id or record.cp_gutc_id
+    referrer = inner.referrer or record.referrer
     query_text = record.query_text
 
     ui_response = a2a_handler.build_a2a_response_from_content(
-        text_content=content,
+        content=inner.content,
         session_id=session_id,
         request_id=request_id,
         context_id=context_id,
@@ -75,27 +74,41 @@ async def _handle_async_response(
 @router.post("/async/response")
 async def webhook_async_response(
     body: WebhookIncomingBody,
-    correlation_store: Annotated[CorrelationStore | RedisCorrelationStore, Depends(get_correlation_store)],
+    correlation_store: Annotated[CorrelationStore | RedisCorrelationStore, Depends(get_correlation_store_dep)],
     connection_manager: ConnectionManagerDep,
     a2a_handler: Annotated[A2AHandler, Depends(get_a2a_handler)],
 ) -> JSONResponse:
     """
     Receive async response from the orchestrator.
-    The requestId in the body is used to look up the correlation store.
+
+    Accepts both formats:
+      - Wrapped:   {"body": {"requestId": ..., ...}}
+      - Unwrapped: {"requestId": ..., ...}
+
+    The requestId is used to look up the correlation store.
     ACK with 200 so the orchestrator can consider the message delivered.
     Return 5xx on failure so the orchestrator can retry.
     """
-    rid = body.request_id
+    inner = body.resolve()
+    rid = inner.request_id
+
     if not rid:
-        logger.warning("webhook_async_response_missing_request_id")
+        logger.warning("webhook_async_response_missing_request_id", raw_keys=list(body.model_dump().keys()))
         return JSONResponse(
             status_code=400,
             content={"error": "requestId required in body"},
         )
 
+    logger.info(
+        "webhook_async_response_received",
+        request_id=rid,
+        wrapped=body.body is not None,
+        content_type=type(inner.content).__name__,
+    )
+
     success, err = await _handle_async_response(
         request_id=rid,
-        body=body,
+        inner=inner,
         correlation_store=correlation_store,
         connection_manager=connection_manager,
         a2a_handler=a2a_handler,

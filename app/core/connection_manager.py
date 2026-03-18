@@ -236,6 +236,34 @@ class ConnectionManager:
 
         return sent_count
 
+    def get_idle_connections(self, idle_timeout_seconds: int) -> list[ConnectionInfo]:
+        """Return connections that have been idle longer than the threshold."""
+        now = datetime.utcnow()
+        idle: list[ConnectionInfo] = []
+        for conn in self._connections.values():
+            last_activity = conn.last_message_at or conn.connected_at
+            elapsed = (now - last_activity).total_seconds()
+            if elapsed > idle_timeout_seconds:
+                idle.append(conn)
+        return idle
+
+    async def close_connection(self, connection_id: str, code: int = 1000, reason: str = "") -> bool:
+        """Close a WebSocket connection by ID and remove it from the manager."""
+        conn = self._connections.get(connection_id)
+        if conn is None:
+            return False
+        try:
+            await conn.websocket.close(code=code, reason=reason)
+        except Exception:
+            pass
+        self._connections.pop(connection_id, None)
+        self._logger.info(
+            "connection_closed_idle",
+            connection_id=connection_id,
+            reason=reason,
+        )
+        return True
+
     def get_stats(self) -> dict[str, Any]:
         """Get connection statistics."""
         return {

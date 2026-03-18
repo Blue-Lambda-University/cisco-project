@@ -1,6 +1,5 @@
-"""WebSocket endpoint with server-side heartbeat."""
+"""WebSocket endpoint with protocol-level keepalive (ws_ping_interval in worker config)."""
 
-import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -22,8 +21,6 @@ from app.services.message_handler import MessageHandler
 router = APIRouter(tags=["websocket"])
 
 logger = get_logger()
-
-PING_MESSAGE = json.dumps({"type": "ping"})
 
 RATE_LIMIT_ERROR_CODE = -32429
 
@@ -68,31 +65,6 @@ async def negotiate_subprotocol(
     return None
 
 
-async def _heartbeat_loop(
-    websocket: WebSocket,
-    interval: int,
-    connection_logger,
-) -> None:
-    """
-    Send periodic pings to keep the connection alive through proxies.
-
-    If the client sends {"type": "pong"}, it's handled in the message loop
-    (updates last_pong timestamp) but is not required.
-
-    Args:
-        websocket: The WebSocket connection.
-        interval: Seconds between pings.
-        connection_logger: Logger bound to this connection.
-    """
-    try:
-        while True:
-            await asyncio.sleep(interval)
-            await websocket.send_text(PING_MESSAGE)
-            connection_logger.debug("heartbeat_ping_sent")
-    except Exception:
-        pass
-
-
 async def handle_connection(
     websocket: WebSocket,
     connection_manager: ConnectionManager,
@@ -133,28 +105,9 @@ async def handle_connection(
         burst_size=settings.rate_limit_burst_size,
     )
 
-    heartbeat_task = asyncio.create_task(
-        _heartbeat_loop(
-            websocket=websocket,
-            interval=settings.heartbeat_interval_seconds,
-            connection_logger=connection_logger,
-        )
-    )
-    
     try:
         while True:
             raw_message = await websocket.receive_text()
-
-            # Handle pong from client — acknowledge and skip processing
-            stripped = raw_message.strip()
-            if stripped.startswith("{"):
-                try:
-                    maybe_pong = json.loads(stripped)
-                    if isinstance(maybe_pong, dict) and maybe_pong.get("type") == "pong":
-                        connection_logger.debug("heartbeat_pong_received")
-                        continue
-                except (json.JSONDecodeError, KeyError):
-                    pass
 
             # Rate limit check
             allowed, wait_seconds = rate_limiter.consume()
@@ -219,7 +172,6 @@ async def handle_connection(
         except Exception:
             pass
     finally:
-        heartbeat_task.cancel()
         correlation_store = get_correlation_store()
         orphaned = correlation_store.remove_by_connection(connection_info.connection_id)
         if orphaned:
