@@ -1,5 +1,11 @@
 # End-to-End Payloads
 
+> All `id` values are UUIDs. Fields marked *(optional)* are omitted from the payload when not provided by the sender.
+
+---
+
+## First Chat (Welcome Flow)
+
 ### Step 1: UI → WebSocket Server (First Chat / Welcome)
 
 ```json
@@ -19,11 +25,22 @@
       "conversationId": "d290f1ee-6c54-4b01-90e6-d701748f0851",
       "CP_GUTC_Id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
       "referrer": "https://www.cisco.com",
-      "isFirstChat": true
+      "isFirstChat": true,
+      "userId": "a8b9c0d1-e2f3-4a5b-6c7d-8e9f0a1b2c3d",
+      "email": "user@cisco.com"
     }
   }
 }
 ```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `params.message.messageId` | optional | Client-generated message id |
+| `params.metadata.sessionId` | optional | Omit on very first visit; server creates one |
+| `params.metadata.conversationId` | optional | Omit on very first visit; server creates one |
+| `params.metadata.userId` | optional | Passed through to orchestrator if provided |
+| `params.metadata.email` | optional | Passed through to orchestrator if provided |
+| `params.metadata.isFirstChat` | required | Must be `true` for welcome flow |
 
 ### Step 2: WebSocket Server → UI (Welcome Response)
 
@@ -63,6 +80,8 @@ No orchestrator call — returned immediately:
 
 ---
 
+## Normal Message Flow (via Orchestrator)
+
 ### Step 3: UI → WebSocket Server (Normal Message)
 
 ```json
@@ -82,7 +101,9 @@ No orchestrator call — returned immediately:
       "conversationId": "d290f1ee-6c54-4b01-90e6-d701748f0851",
       "CP_GUTC_Id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
       "referrer": "https://www.cisco.com",
-      "isFirstChat": false
+      "isFirstChat": false,
+      "userId": "a8b9c0d1-e2f3-4a5b-6c7d-8e9f0a1b2c3d",
+      "email": "user@cisco.com"
     }
   }
 }
@@ -101,8 +122,11 @@ HTTP `POST {agent_base_url}/a2a/`:
     "message": {
       "role": "user",
       "parts": [{"kind": "text", "text": "get my licensing cases"}],
+      "messageId": "e4d3c2b1-a0f9-8e7d-6c5b-4a3928170615",
       "contextId": "d290f1ee-6c54-4b01-90e6-d701748f0851",
       "metadata": {
+        "user_id": "a8b9c0d1-e2f3-4a5b-6c7d-8e9f0a1b2c3d",
+        "email": "user@cisco.com",
         "conversation_id": "d290f1ee-6c54-4b01-90e6-d701748f0851",
         "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
         "request_id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c",
@@ -116,6 +140,19 @@ HTTP `POST {agent_base_url}/a2a/`:
   }
 }
 ```
+
+| UI (camelCase) | Orchestrator (snake_case) | Notes |
+|----------------|---------------------------|-------|
+| `metadata.userId` | `metadata.user_id` | Optional — omitted if UI doesn't send it |
+| `metadata.email` | `metadata.email` | Optional — omitted if UI doesn't send it |
+| `metadata.sessionId` | `metadata.session_id` | |
+| `metadata.conversationId` | `metadata.conversation_id` | |
+| `metadata.CP_GUTC_Id` | `metadata.cp_gutc_id` | |
+| `metadata.referrer` | `metadata.referrer` | |
+| `message.messageId` | `message.messageId` | Same level as `contextId` |
+| `id` (top-level) | `id` / `metadata.request_id` | Correlation key for webhook callback |
+
+> **Note:** All metadata fields are optional. Any field the UI omits will not appear in the orchestrator payload (`exclude_none=True`).
 
 ### Step 5: Orchestrator → WebSocket Server (Webhook)
 
@@ -155,6 +192,8 @@ HTTP `POST /ciscoua/api/v1/ws/async/response`:
   }
 }
 ```
+
+> The webhook accepts both wrapped (`{"body": {...}}`) and unwrapped formats. The `requestId` is used to look up the pending correlation entry and route the response to the correct WebSocket connection.
 
 ### Step 6: WebSocket Server → UI (Final Response)
 
@@ -215,22 +254,58 @@ HTTP `POST /ciscoua/api/v1/ws/async/response`:
 
 ---
 
-### Error Responses (WebSocket Server → UI)
+## Error Responses (WebSocket Server → UI)
 
 **Rate limited:**
 
 ```json
-{"jsonrpc": "2.0", "id": null, "error": {"code": -32429, "message": "Rate limit exceeded", "data": {"retryAfterMs": 4500}}}
+{
+  "jsonrpc": "2.0",
+  "id": null,
+  "error": {
+    "code": -32429,
+    "message": "Rate limit exceeded",
+    "data": {"retryAfterMs": 4500}
+  }
+}
 ```
 
 **Orchestrator timeout:**
 
 ```json
-{"jsonrpc": "2.0", "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c", "error": {"code": -32408, "message": "Request timed out waiting for orchestrator response", "data": {"timeoutSeconds": 60}}}
+{
+  "jsonrpc": "2.0",
+  "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c",
+  "error": {
+    "code": -32408,
+    "message": "Request timed out waiting for orchestrator response",
+    "data": {"timeoutSeconds": 1800}
+  }
+}
 ```
 
 **Session expired:**
 
 ```json
-{"jsonrpc": "2.0", "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c", "error": {"code": -32404, "message": "Session expired"}}
+{
+  "jsonrpc": "2.0",
+  "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c",
+  "error": {
+    "code": -32404,
+    "message": "Session expired"
+  }
+}
+```
+
+**Orchestrator unavailable:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "b7e1c5a3-9f2d-4e8b-a6c4-1d3f5e7a9b0c",
+  "error": {
+    "code": -32503,
+    "message": "Orchestrator unavailable"
+  }
+}
 ```
