@@ -21,6 +21,7 @@ class OutgoingMessageMetadata(BaseModel):
     """Metadata embedded inside params.message for the orchestrator (snake_case keys)."""
 
     user_id: str | None = Field(default=None)
+    email: str | None = Field(default=None)
     conversation_id: str | None = Field(default=None)
     session_id: str | None = Field(default=None)
     request_id: str | None = Field(default=None)

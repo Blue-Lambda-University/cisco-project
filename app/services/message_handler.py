@@ -223,9 +223,17 @@ class MessageHandler:
         connection_id: str | None = None,
     ) -> UIResponse | A2AErrorResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler or forward to orchestrator."""
-        query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat = extract_a2a_ids_and_query(
-            a2a_request
-        )
+        ext = extract_a2a_ids_and_query(a2a_request)
+        query_text = ext.query_text
+        request_id = ext.request_id
+        session_id = ext.session_id
+        conversation_id = ext.conversation_id
+        cp_gutc_id = ext.cp_gutc_id
+        referrer = ext.referrer
+        is_first_chat = ext.is_first_chat
+        user_id = ext.user_id
+        email = ext.email
+        message_id = ext.message_id
         response_id = str(a2a_request.id) if a2a_request.id is not None else None
 
         if not query_text and not is_first_chat:
@@ -316,8 +324,11 @@ class MessageHandler:
                 request_id=request_id_str,
                 session_id=session_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
+                user_id=user_id,
+                email=email,
             )
             self._logger.info(
                 "a2a_request_forwarded_async",

@@ -64,7 +64,7 @@ data:
   UA_WS_HEARTBEAT_TIMEOUT_SECONDS: "10"
 
   # Async response timeout
-  UA_WS_ASYNC_RESPONSE_TIMEOUT_SECONDS: "60"
+  UA_WS_ASYNC_RESPONSE_TIMEOUT_SECONDS: "1800"
 
   # Connection idle timeout (seconds) — close connections with no messages for this long
   UA_WS_CONNECTION_IDLE_TIMEOUT_SECONDS: "1800"

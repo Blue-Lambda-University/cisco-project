@@ -24,13 +24,15 @@ class A2AMessage(BaseModel):
 
 
 class A2ARequestMetadata(BaseModel):
-    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, isFirstChat)."""
+    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, isFirstChat, userId, email)."""
 
-    session_id: str | None = Field(default=None, alias="sessionId", description="Session id for TTL")
-    conversation_id: str | None = Field(default=None, alias="conversationId", description="Conversation/context id")
-    cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id", description="CP GUTC Id from UI (passed to webhook/orchestrator)")
-    referrer: str | None = Field(default=None, description="Referrer from UI (passed to webhook/orchestrator)")
-    is_first_chat: bool = Field(default=False, alias="isFirstChat", description="True when first chat; return welcome message")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    conversation_id: str | None = Field(default=None, alias="conversationId")
+    cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id")
+    referrer: str | None = Field(default=None)
+    is_first_chat: bool = Field(default=False, alias="isFirstChat")
+    user_id: str | None = Field(default=None, alias="userId")
+    email: str | None = Field(default=None)
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -75,41 +77,64 @@ def parse_a2a_request(data: dict[str, Any]) -> A2ASendMessageRequest | None:
         return None
 
 
-def extract_a2a_ids_and_query(
-    request: A2ASendMessageRequest,
-) -> tuple[str, str | None, str | None, str | None, str | None, str | None, bool]:
-    """
-    Extract query text and ids from a parsed A2A request.
+class A2AExtracted:
+    """Extracted fields from an A2A request."""
 
-    Returns:
-        (query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat)
-    """
-    request_id = str(request.id) if request.id is not None else None
-    session_id: str | None = None
-    conversation_id: str | None = None
-    cp_gutc_id: str | None = None
-    referrer: str | None = None
-    is_first_chat = False
+    __slots__ = (
+        "query_text", "request_id", "session_id", "conversation_id",
+        "cp_gutc_id", "referrer", "is_first_chat", "user_id", "email", "message_id",
+    )
+
+    def __init__(
+        self,
+        query_text: str = "",
+        request_id: str | None = None,
+        session_id: str | None = None,
+        conversation_id: str | None = None,
+        cp_gutc_id: str | None = None,
+        referrer: str | None = None,
+        is_first_chat: bool = False,
+        user_id: str | None = None,
+        email: str | None = None,
+        message_id: str | None = None,
+    ) -> None:
+        self.query_text = query_text
+        self.request_id = request_id
+        self.session_id = session_id
+        self.conversation_id = conversation_id
+        self.cp_gutc_id = cp_gutc_id
+        self.referrer = referrer
+        self.is_first_chat = is_first_chat
+        self.user_id = user_id
+        self.email = email
+        self.message_id = message_id
+
+
+def extract_a2a_ids_and_query(request: A2ASendMessageRequest) -> A2AExtracted:
+    """Extract query text, ids, and metadata from a parsed A2A request."""
+    result = A2AExtracted(
+        request_id=str(request.id) if request.id is not None else None,
+    )
 
     if request.params.metadata:
         meta = request.params.metadata
-        if meta.session_id:
-            session_id = (meta.session_id or "").strip() or None
-        if meta.conversation_id:
-            conversation_id = (meta.conversation_id or "").strip() or None
-        if meta.cp_gutc_id:
-            cp_gutc_id = (meta.cp_gutc_id or "").strip() or None
-        if meta.referrer:
-            referrer = (meta.referrer or "").strip() or None
-        is_first_chat = getattr(meta, "is_first_chat", False)
+        result.session_id = (meta.session_id or "").strip() or None
+        result.conversation_id = (meta.conversation_id or "").strip() or None
+        result.cp_gutc_id = (meta.cp_gutc_id or "").strip() or None
+        result.referrer = (meta.referrer or "").strip() or None
+        result.is_first_chat = getattr(meta, "is_first_chat", False)
+        result.user_id = (meta.user_id or "").strip() or None
+        result.email = (meta.email or "").strip() or None
 
-    if not conversation_id and request.params.message.context_id:
-        conversation_id = (request.params.message.context_id or "").strip() or None
+    if not result.conversation_id and request.params.message.context_id:
+        result.conversation_id = (request.params.message.context_id or "").strip() or None
+
+    result.message_id = (request.params.message.message_id or "").strip() or None if request.params.message.message_id else None
 
     query_parts: list[str] = []
     for part in request.params.message.parts or []:
         if getattr(part, "text", None):
             query_parts.append(part.text.strip())
-    query_text = " ".join(query_parts).strip() if query_parts else ""
+    result.query_text = " ".join(query_parts).strip() if query_parts else ""
 
-    return query_text, request_id, session_id, conversation_id, cp_gutc_id, referrer, is_first_chat
+    return result

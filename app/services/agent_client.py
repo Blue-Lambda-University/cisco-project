@@ -35,6 +35,7 @@ class AgentClient:
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
         user_id: str | None = None,
+        email: str | None = None,
     ) -> bool:
         """
         Build JSON-RPC 2.0 payload and POST to the orchestrator /a2a/ endpoint.
@@ -42,6 +43,7 @@ class AgentClient:
         """
         metadata = OutgoingMessageMetadata(
             user_id=user_id,
+            email=email,
             conversation_id=conversation_id,
             session_id=session_id,
             request_id=request_id,
