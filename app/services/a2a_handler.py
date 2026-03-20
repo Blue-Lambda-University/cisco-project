@@ -362,6 +362,53 @@ class A2AHandler:
         )
 
     @staticmethod
+    def extract_text_from_sse_event(event: dict) -> tuple[str, str, bool]:
+        """
+        Extract (text, state, is_final) from a raw orchestrator SSE event.
+
+        Returns:
+            text: extracted display text (empty string if none)
+            state: task state ("working", "completed", etc.)
+            is_final: whether this is the final event in the stream
+        """
+        result = event.get("result", {})
+        kind = result.get("kind", "")
+        text = ""
+        state = "working"
+        is_final = bool(result.get("final", False))
+
+        if kind == "status-update":
+            status = result.get("status", {})
+            state = status.get("state", "working")
+            message = status.get("message")
+            if isinstance(message, dict):
+                for part in message.get("parts", []):
+                    if isinstance(part, dict) and part.get("kind") == "text":
+                        text += part.get("text", "")
+
+        elif kind == "artifact-update":
+            artifact = result.get("artifact", {})
+            for part in artifact.get("parts", []):
+                if isinstance(part, dict) and part.get("kind") == "text":
+                    text += part.get("text", "")
+
+        elif kind == "task":
+            status = result.get("status", {})
+            state = status.get("state", "working")
+            message = status.get("message")
+            if isinstance(message, dict):
+                for part in message.get("parts", []):
+                    if isinstance(part, dict) and part.get("kind") == "text":
+                        text += part.get("text", "")
+            for artifact in result.get("artifacts", []):
+                if isinstance(artifact, dict):
+                    for part in artifact.get("parts", []):
+                        if isinstance(part, dict) and part.get("kind") == "text":
+                            text += part.get("text", "")
+
+        return text, state, is_final
+
+    @staticmethod
     def extract_text_from_content(content: Any) -> str:
         """
         Extract display text from orchestrator content which may be:

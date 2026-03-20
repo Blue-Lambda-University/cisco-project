@@ -131,6 +131,7 @@ async def handle_connection(
                 raw_message=raw_message,
                 connection_id=connection_info.connection_id,
                 subprotocol=subprotocol,
+                send_fn=websocket.send_text,
             )
             
             if response is None:

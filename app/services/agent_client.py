@@ -1,5 +1,8 @@
 """Client for forwarding A2A requests to the orchestrator (async flow)."""
 
+import json
+from typing import AsyncIterator
+
 import httpx
 
 from app.logging.setup import get_logger
@@ -87,3 +90,59 @@ class AgentClient:
         except Exception as e:
             self._logger.exception("agent_request_error", request_id=request_id, error=str(e))
             return False
+
+    async def send_streaming(
+        self,
+        query_text: str,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        conversation_id: str | None = None,
+        message_id: str | None = None,
+        cp_gutc_id: str | None = None,
+        referrer: str | None = None,
+        user_id: str | None = None,
+        email: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """POST to orchestrator and yield parsed SSE events as they arrive."""
+        metadata = OutgoingMessageMetadata(
+            user_id=user_id,
+            email=email,
+            conversation_id=conversation_id,
+            session_id=session_id,
+            request_id=request_id,
+            cp_gutc_id=cp_gutc_id,
+            referrer=referrer,
+        )
+        message = OutgoingMessage(
+            role="user",
+            parts=[{"kind": "text", "text": query_text}],
+            message_id=message_id,
+            context_id=conversation_id,
+            metadata=metadata,
+        )
+        body = WebhookOutgoingBody(
+            id=request_id,
+            params=OutgoingParams(
+                message=message,
+                configuration=OutgoingConfiguration(),
+            ),
+        )
+        payload = body.model_dump(by_alias=True, exclude_none=True)
+        url = f"{self._base_url}/a2a/"
+
+        timeout = httpx.Timeout(30.0, read=120.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    async for line in response.aiter_lines():
+                        if line.startswith("data:"):
+                            data_str = line[5:].strip()
+                            if data_str:
+                                try:
+                                    yield json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    pass
+        except Exception as e:
+            self._logger.exception(
+                "streaming_request_error", request_id=request_id, error=str(e),
+            )
