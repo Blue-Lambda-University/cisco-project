@@ -313,10 +313,7 @@ class MessageHandler:
             and self._correlation_store is not None
             and self._agent_client is not None
         ):
-            # Always unique per message — the UI's JSON-RPC id (response_id)
-            # can be reused across messages in a conversation, so it must not
-            # be used as the async correlation key.
-            request_id_str = str(uuid.uuid4())
+            request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
             self._correlation_store.set(
                 request_id=request_id_str,
                 connection_id=connection_id,
@@ -345,9 +342,9 @@ class MessageHandler:
             ):
                 text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
                 if text:
-                    # The final "task" event repeats artifact text that was
-                    # already delivered via earlier artifact-update events.
-                    # Skip appending when we already have content to avoid
+                    # The final "task" event repeats artifact text already
+                    # delivered via earlier artifact-update events.  Skip
+                    # appending when we already have content to avoid
                     # doubling the response text.
                     if is_final and got_content:
                         pass
