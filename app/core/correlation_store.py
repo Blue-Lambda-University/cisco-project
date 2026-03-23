@@ -19,6 +19,8 @@ from app.logging.setup import get_logger
 logger = get_logger()
 
 REDIS_CORRELATION_KEY_PREFIX = "ws_pending_request:"
+REDIS_DELIVERED_KEY_PREFIX = "ws_delivered:"
+DELIVERED_CACHE_TTL_SECONDS = 120
 
 
 @dataclass
@@ -52,6 +54,10 @@ class CorrelationStoreProtocol(Protocol):
 
     def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None: ...
 
+    def mark_delivered(self, request_id: str) -> None: ...
+
+    def was_delivered(self, request_id: str) -> bool: ...
+
     def get_expired(self, timeout_seconds: float) -> list[tuple[str, PendingAsyncRequest]]: ...
 
     def remove_by_connection(self, connection_id: str) -> list[str]: ...
@@ -66,10 +72,12 @@ class CorrelationStore:
     """
     In-memory mapping of requestId -> PendingAsyncRequest.
     One-time use: get_and_remove consumes the entry.
+    Tracks recently-delivered IDs so retried webhooks get an idempotent 200.
     """
 
     def __init__(self) -> None:
         self._pending: dict[str, PendingAsyncRequest] = {}
+        self._delivered: dict[str, float] = {}
 
     def set(
         self,
@@ -96,6 +104,20 @@ class CorrelationStore:
     def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
         """Return and remove the pending request for this requestId, or None."""
         return self._pending.pop(request_id, None)
+
+    def mark_delivered(self, request_id: str) -> None:
+        """Remember that this requestId was successfully delivered."""
+        self._delivered[request_id] = time.monotonic()
+        self._prune_delivered()
+
+    def was_delivered(self, request_id: str) -> bool:
+        """Check whether this requestId was recently delivered."""
+        self._prune_delivered()
+        return request_id in self._delivered
+
+    def _prune_delivered(self) -> None:
+        cutoff = time.monotonic() - DELIVERED_CACHE_TTL_SECONDS
+        self._delivered = {k: v for k, v in self._delivered.items() if v > cutoff}
 
     def get_expired(self, timeout_seconds: float) -> list[tuple[str, PendingAsyncRequest]]:
         """Remove and return all entries older than timeout_seconds."""
@@ -212,6 +234,20 @@ class RedisCorrelationStore:
         if raw is None:
             return None
         return self._deserialize(raw)
+
+    def mark_delivered(self, request_id: str) -> None:
+        """Remember that this requestId was successfully delivered (short TTL)."""
+        client = self._get_client()
+        client.set(
+            f"{REDIS_DELIVERED_KEY_PREFIX}{request_id}",
+            "1",
+            ex=DELIVERED_CACHE_TTL_SECONDS,
+        )
+
+    def was_delivered(self, request_id: str) -> bool:
+        """Check whether this requestId was recently delivered."""
+        client = self._get_client()
+        return bool(client.exists(f"{REDIS_DELIVERED_KEY_PREFIX}{request_id}"))
 
     def get_expired(self, timeout_seconds: float) -> list[tuple[str, PendingAsyncRequest]]:
         """

@@ -31,14 +31,27 @@ async def _handle_async_response(
     correlation_store: CorrelationStore | RedisCorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
-) -> tuple[bool, str]:
+) -> tuple[int, dict]:
     """
     Look up connection by requestId, build rich UI response, send to WebSocket.
-    Returns (success, error_message).
+
+    Returns (http_status, response_body).
+
+    Idempotency contract:
+    - 200 "delivered"          → first successful delivery
+    - 200 "already_delivered"  → retry of a previously delivered requestId
+    - 200 "connection_closed"  → client disconnected; retrying won't help
+    - 200 "unknown_request_id" → requestId not in pending or delivered cache
+    - 503 "send_failed"        → connection alive but send failed (transient)
     """
+    if correlation_store.was_delivered(request_id):
+        logger.info("webhook_already_delivered", request_id=request_id)
+        return 200, {"status": "already_delivered"}
+
     record = correlation_store.get_and_remove(request_id)
     if record is None:
-        return False, "requestId not found or already consumed"
+        logger.warning("webhook_request_id_unknown", request_id=request_id)
+        return 200, {"status": "unknown_request_id"}
 
     session_id = inner.session_id or record.session_id
     context_id = inner.context_id or record.context_id
@@ -61,14 +74,40 @@ async def _handle_async_response(
 
     sent = await connection_manager.send_to_connection(record.connection_id, response_json)
     if not sent:
-        return False, "connection not found or send failed"
+        conn_exists = connection_manager.get_connection(record.connection_id) is not None
+        if conn_exists:
+            # Connection alive but send failed — put the entry back for retry
+            correlation_store.set(
+                request_id=request_id,
+                connection_id=record.connection_id,
+                session_id=record.session_id,
+                context_id=record.context_id,
+                conversation_id=record.conversation_id,
+                cp_gutc_id=record.cp_gutc_id,
+                referrer=record.referrer,
+                query_text=record.query_text,
+            )
+            logger.warning(
+                "webhook_send_failed_transient",
+                request_id=request_id,
+                connection_id=record.connection_id,
+            )
+            return 503, {"error": "send_failed"}
 
+        logger.warning(
+            "webhook_connection_gone",
+            request_id=request_id,
+            connection_id=record.connection_id,
+        )
+        return 200, {"status": "connection_closed"}
+
+    correlation_store.mark_delivered(request_id)
     logger.info(
         "async_response_delivered",
         request_id=request_id,
         connection_id=record.connection_id,
     )
-    return True, ""
+    return 200, {"status": "delivered"}
 
 
 @router.post("/async/response")
@@ -106,13 +145,11 @@ async def webhook_async_response(
         content_type=type(inner.content).__name__,
     )
 
-    success, err = await _handle_async_response(
+    status_code, body = await _handle_async_response(
         request_id=rid,
         inner=inner,
         correlation_store=correlation_store,
         connection_manager=connection_manager,
         a2a_handler=a2a_handler,
     )
-    if success:
-        return JSONResponse(status_code=200, content={"status": "delivered"})
-    return JSONResponse(status_code=503, content={"error": err})
+    return JSONResponse(status_code=status_code, content=body)

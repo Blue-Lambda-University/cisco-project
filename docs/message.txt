@@ -1,0 +1,9 @@
+Root cause: webhook returning 503 on retries, causing retry storm + WebSocket disconnection
+
+We found the issue. When the orchestrator sends a webhook callback to /ws/async/response, we consume the requestId from the correlation store on the first delivery attempt. If the orchestrator retries (e.g. timeout before it sees our 200), the second attempt finds no correlation entry and we return 503. The orchestrator interprets 503 as "try again," creating a retry loop.
+
+The WebSocket disconnection (Gautam's observation) is a side effect — the retries and failed sends can cascade into the active WebSocket connection getting torn down, which then cleans up all remaining correlation entries for that connection.
+
+Fix: We made the webhook idempotent. After a successful delivery we now cache the requestId for 2 minutes. Retries get a 200 ("already delivered") instead of 503, so the orchestrator stops retrying. We also only return 503 for genuinely transient failures (connection alive but send failed), not for permanent ones like the client having already disconnected.
+
+Files changed: correlation_store.py, webhooks.py, message_handler.py

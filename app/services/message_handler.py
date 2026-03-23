@@ -357,6 +357,7 @@ class MessageHandler:
 
             if got_content:
                 self._correlation_store.get_and_remove(request_id_str)
+                self._correlation_store.mark_delivered(request_id_str)
                 final_resp = self._a2a_handler.build_a2a_response_from_content(
                     content=accumulated_text,
                     session_id=session_id,
