@@ -313,7 +313,10 @@ class MessageHandler:
             and self._correlation_store is not None
             and self._agent_client is not None
         ):
-            request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
+            # Always unique per message — the UI's JSON-RPC id (response_id)
+            # can be reused across messages in a conversation, so it must not
+            # be used as the async correlation key.
+            request_id_str = str(uuid.uuid4())
             self._correlation_store.set(
                 request_id=request_id_str,
                 connection_id=connection_id,
