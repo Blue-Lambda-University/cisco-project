@@ -136,10 +136,12 @@ class RedisCorrelationStore:
 
     def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
         client = self._get_client()
-        raw = client.getdel(self._key(request_id))
+        key = self._key(request_id)
+        raw = client.get(key)
         if raw is None:
             logger.warning("redis_correlation_store_miss", request_id=request_id)
             return None
+        client.delete(key)
         logger.debug("redis_correlation_store_hit_removed", request_id=request_id)
         return self._deserialize(raw)
 
