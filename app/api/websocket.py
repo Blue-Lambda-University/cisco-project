@@ -174,7 +174,7 @@ async def handle_connection(
             pass
     finally:
         correlation_store = get_correlation_store()
-        orphaned = correlation_store.remove_by_connection(connection_info.connection_id)
+        orphaned = await correlation_store.remove_by_connection(connection_info.connection_id)
         if orphaned:
             connection_logger.info(
                 "orphaned_correlation_entries_removed",
