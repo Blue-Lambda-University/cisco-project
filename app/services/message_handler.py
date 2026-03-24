@@ -203,6 +203,8 @@ class MessageHandler:
         referrer = extracted.referrer or ""
         is_first_chat = extracted.is_first_chat
         message_id = extracted.message_id or str(uuid.uuid4())
+        user_id = extracted.user_id
+        email = extracted.email
         response_id = a2a_request.id if a2a_request.id is not None else None
 
         # First chat → return welcome message immediately (no orchestrator call)
@@ -307,6 +309,8 @@ class MessageHandler:
                 message_id=message_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
+                user_id=user_id,
+                email=email,
             )
             if accepted:
                 self._logger.info(
