@@ -31,29 +31,14 @@ async def _handle_async_response(
     correlation_store: CorrelationStore | RedisCorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
-) -> tuple[int, dict]:
+) -> tuple[bool, str]:
     """
-    Look up connection by requestId (or conversationId FIFO), build UI response,
-    send to WebSocket.
-
-    Returns (http_status, response_body).
-
-    Idempotency contract — always 200 except genuine transient failures:
-    - 200 "delivered"           -> response pushed to WebSocket
-    - 200 "no_pending_entries"  -> queue empty for this conversationId
-    - 200 "connection_closed"   -> client disconnected, retrying won't help
-    - 503 "send_failed"         -> connection alive but send failed (transient)
+    Look up connection by requestId, build rich UI response, send to WebSocket.
+    Returns (success, error_message).
     """
-    # Try exact requestId match first (future-proof for when orch echoes our ID)
     record = correlation_store.get_and_remove(request_id)
-
-    # Fallback: orchestrator sends conversationId as requestId — pop from FIFO queue
     if record is None:
-        record = correlation_store.pop_by_conversation(request_id)
-
-    if record is None:
-        logger.info("webhook_no_pending_entries", request_id=request_id)
-        return 200, {"status": "no_pending_entries"}
+        return False, "requestId not found or already consumed"
 
     session_id = inner.session_id or record.session_id
     context_id = inner.context_id or record.context_id
@@ -76,29 +61,14 @@ async def _handle_async_response(
 
     sent = await connection_manager.send_to_connection(record.connection_id, response_json)
     if not sent:
-        conn_exists = connection_manager.get_connection(record.connection_id) is not None
-        if conn_exists:
-            logger.warning(
-                "webhook_send_failed_transient",
-                request_id=request_id,
-                connection_id=record.connection_id,
-            )
-            return 503, {"error": "send_failed"}
+        return False, "connection not found or send failed"
 
-        logger.warning(
-            "webhook_connection_gone",
-            request_id=request_id,
-            connection_id=record.connection_id,
-        )
-        return 200, {"status": "connection_closed"}
-
-    correlation_store.mark_delivered(request_id)
     logger.info(
         "async_response_delivered",
         request_id=request_id,
         connection_id=record.connection_id,
     )
-    return 200, {"status": "delivered"}
+    return True, ""
 
 
 @router.post("/async/response")
@@ -115,9 +85,9 @@ async def webhook_async_response(
       - Wrapped:   {"body": {"requestId": ..., ...}}
       - Unwrapped: {"requestId": ..., ...}
 
-    The requestId is used to look up the correlation store (exact match or
-    conversationId FIFO queue).
-    ACK with 200 so the orchestrator stops retrying.
+    The requestId is used to look up the correlation store.
+    ACK with 200 so the orchestrator can consider the message delivered.
+    Return 5xx on failure so the orchestrator can retry.
     """
     inner = body.resolve()
     rid = inner.request_id
@@ -136,11 +106,13 @@ async def webhook_async_response(
         content_type=type(inner.content).__name__,
     )
 
-    status_code, body_out = await _handle_async_response(
+    success, err = await _handle_async_response(
         request_id=rid,
         inner=inner,
         correlation_store=correlation_store,
         connection_manager=connection_manager,
         a2a_handler=a2a_handler,
     )
-    return JSONResponse(status_code=status_code, content=body_out)
+    if success:
+        return JSONResponse(status_code=200, content={"status": "delivered"})
+    return JSONResponse(status_code=503, content={"error": err})
