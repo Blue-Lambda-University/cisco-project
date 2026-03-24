@@ -270,6 +270,13 @@ class MessageHandler:
         )
 
         # ── Async flow: forward to orchestrator, response comes back via webhook ──
+        self._logger.info(
+            "async_flow_check",
+            has_settings=self._settings is not None,
+            async_flow_enabled=self._settings.async_flow_enabled if self._settings else False,
+            has_agent_client=self._agent_client is not None,
+            has_correlation_store=self._correlation_store is not None,
+        )
         if (
             self._settings
             and self._settings.async_flow_enabled
