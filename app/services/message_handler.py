@@ -320,17 +320,9 @@ class MessageHandler:
                 email=email,
             ):
                 text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
-                if text:
+                if text and not (is_final and got_content):
                     accumulated_text += text
                     got_content = True
-                    if send_fn and not is_final:
-                        streaming_resp = UIResponse(
-                            context_id=conversation_id or "",
-                            response=accumulated_text,
-                            conversation_id=conversation_id or "",
-                            status="streaming",
-                        )
-                        await send_fn(streaming_resp.model_dump_json(by_alias=True))
 
             if got_content:
                 await self._correlation_store.get_and_remove(request_id_str)
