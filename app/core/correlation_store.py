@@ -34,15 +34,15 @@ class PendingAsyncRequest:
 class CorrelationStoreProtocol(Protocol):
     """Minimal interface so both in-memory and Redis stores are interchangeable."""
 
-    async def set(self, request_id: str, record: PendingAsyncRequest) -> None: ...
+    def set(self, request_id: str, record: PendingAsyncRequest) -> None: ...
 
-    async def get(self, request_id: str) -> PendingAsyncRequest | None: ...
+    def get(self, request_id: str) -> PendingAsyncRequest | None: ...
 
-    async def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None: ...
+    def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None: ...
 
-    async def remove_by_connection(self, connection_id: str) -> list[str]: ...
+    def remove_by_connection(self, connection_id: str) -> list[str]: ...
 
-    async def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]: ...
+    def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]: ...
 
 
 class CorrelationStore:
@@ -51,11 +51,11 @@ class CorrelationStore:
     def __init__(self) -> None:
         self._pending: dict[str, PendingAsyncRequest] = {}
 
-    async def set(self, request_id: str, record: PendingAsyncRequest) -> None:
+    def set(self, request_id: str, record: PendingAsyncRequest) -> None:
         self._pending[request_id] = record
         logger.debug("correlation_store_set", request_id=request_id, connection_id=record.connection_id)
 
-    async def get(self, request_id: str) -> PendingAsyncRequest | None:
+    def get(self, request_id: str) -> PendingAsyncRequest | None:
         """Non-destructive lookup — entry stays in the store for subsequent webhooks."""
         entry = self._pending.get(request_id)
         if entry is None:
@@ -64,7 +64,7 @@ class CorrelationStore:
             logger.debug("correlation_store_hit", request_id=request_id)
         return entry
 
-    async def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
+    def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
         entry = self._pending.pop(request_id, None)
         if entry is None:
             logger.warning("correlation_store_miss", request_id=request_id)
@@ -72,7 +72,7 @@ class CorrelationStore:
             logger.debug("correlation_store_hit_removed", request_id=request_id)
         return entry
 
-    async def remove_by_connection(self, connection_id: str) -> list[str]:
+    def remove_by_connection(self, connection_id: str) -> list[str]:
         """Remove all entries for a given connection (cleanup on WS disconnect)."""
         orphaned = [
             rid for rid, rec in self._pending.items()
@@ -82,7 +82,7 @@ class CorrelationStore:
             del self._pending[rid]
         return orphaned
 
-    async def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]:
+    def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]:
         """Return and remove entries older than timeout_seconds."""
         now = time.time()
         expired: list[tuple[str, PendingAsyncRequest]] = []
@@ -94,7 +94,7 @@ class CorrelationStore:
 
 
 class RedisCorrelationStore:
-    """Redis-backed store for multi-pod deployments (async client)."""
+    """Redis-backed store for multi-pod deployments."""
 
     def __init__(self, redis_url: str, auto_expire_seconds: int = DEFAULT_TTL_SECONDS) -> None:
         self._redis_url = redis_url
@@ -103,14 +103,8 @@ class RedisCorrelationStore:
 
     def _get_client(self):
         if self._client is None:
-            import redis.asyncio as aioredis
-            self._client = aioredis.from_url(
-                self._redis_url,
-                decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-            )
+            import redis
+            self._client = redis.Redis.from_url(self._redis_url, decode_responses=True)
         return self._client
 
     @staticmethod
@@ -125,68 +119,68 @@ class RedisCorrelationStore:
     def _deserialize(raw: str) -> PendingAsyncRequest:
         return PendingAsyncRequest(**json.loads(raw))
 
-    async def set(self, request_id: str, record: PendingAsyncRequest) -> None:
+    def set(self, request_id: str, record: PendingAsyncRequest) -> None:
         client = self._get_client()
-        await client.set(self._key(request_id), self._serialize(record), ex=self._ttl)
+        client.set(self._key(request_id), self._serialize(record), ex=self._ttl)
         logger.debug("redis_correlation_store_set", request_id=request_id)
 
-    async def get(self, request_id: str) -> PendingAsyncRequest | None:
+    def get(self, request_id: str) -> PendingAsyncRequest | None:
         """Non-destructive lookup — entry stays in Redis for subsequent webhooks."""
         client = self._get_client()
-        raw = await client.get(self._key(request_id))
+        raw = client.get(self._key(request_id))
         if raw is None:
             logger.warning("redis_correlation_store_miss", request_id=request_id)
             return None
         logger.debug("redis_correlation_store_hit", request_id=request_id)
         return self._deserialize(raw)
 
-    async def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
+    def get_and_remove(self, request_id: str) -> PendingAsyncRequest | None:
         client = self._get_client()
         key = self._key(request_id)
-        raw = await client.get(key)
+        raw = client.get(key)
         if raw is None:
             logger.warning("redis_correlation_store_miss", request_id=request_id)
             return None
-        await client.delete(key)
+        client.delete(key)
         logger.debug("redis_correlation_store_hit_removed", request_id=request_id)
         return self._deserialize(raw)
 
-    async def remove_by_connection(self, connection_id: str) -> list[str]:
+    def remove_by_connection(self, connection_id: str) -> list[str]:
         """Remove all entries for a given connection. Scans matching keys."""
         client = self._get_client()
         orphaned: list[str] = []
         cursor = 0
         while True:
-            cursor, keys = await client.scan(cursor, match=f"{REDIS_KEY_PREFIX}*", count=100)
+            cursor, keys = client.scan(cursor, match=f"{REDIS_KEY_PREFIX}*", count=100)
             for key in keys:
-                raw = await client.get(key)
+                raw = client.get(key)
                 if raw is None:
                     continue
                 rec = self._deserialize(raw)
                 if rec.connection_id == connection_id:
                     request_id = key.removeprefix(REDIS_KEY_PREFIX)
-                    await client.delete(key)
+                    client.delete(key)
                     orphaned.append(request_id)
             if cursor == 0:
                 break
         return orphaned
 
-    async def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]:
+    def get_expired(self, timeout_seconds: int) -> list[tuple[str, PendingAsyncRequest]]:
         """Return and remove entries older than timeout_seconds. Redis TTL handles most cleanup."""
         now = time.time()
         client = self._get_client()
         expired: list[tuple[str, PendingAsyncRequest]] = []
         cursor = 0
         while True:
-            cursor, keys = await client.scan(cursor, match=f"{REDIS_KEY_PREFIX}*", count=100)
+            cursor, keys = client.scan(cursor, match=f"{REDIS_KEY_PREFIX}*", count=100)
             for key in keys:
-                raw = await client.get(key)
+                raw = client.get(key)
                 if raw is None:
                     continue
                 rec = self._deserialize(raw)
                 if now - rec.created_at > timeout_seconds:
                     request_id = key.removeprefix(REDIS_KEY_PREFIX)
-                    await client.delete(key)
+                    client.delete(key)
                     expired.append((request_id, rec))
             if cursor == 0:
                 break
