@@ -127,16 +127,16 @@ class MessageHandler:
         session_id = message.metadata.session_id if message.metadata.session_id else None
         if session_id and session_id.strip():
             session_id = session_id.strip()
-            if self._session_store.get(session_id) is None:
+            if await self._session_store.get(session_id) is None:
                 self._logger.info("session_expired_or_unknown", session_id=session_id)
                 return self._router.create_error_response(
                     code=ErrorCode.SESSION_EXPIRED,
                     message="Session expired or not found. Start a new session.",
                     correlation_id=message.metadata.correlation_id,
                 )
-            self._session_store.extend_ttl(session_id)
+            await self._session_store.extend_ttl(session_id)
         else:
-            session_id = self._session_store.create()
+            session_id = await self._session_store.create()
 
         self._logger.info(
             "message_received",
@@ -219,9 +219,9 @@ class MessageHandler:
         # First chat → return welcome message immediately (no orchestrator call)
         if is_first_chat:
             if not session_id:
-                session_id = self._session_store.create()
+                session_id = await self._session_store.create()
             if conversation_id:
-                self._session_store.set_conversation_session(conversation_id, session_id)
+                await self._session_store.set_conversation_session(conversation_id, session_id)
             bind_message_context(
                 message_type="a2a",
                 correlation_id=str(response_id) if response_id is not None else None,
@@ -256,7 +256,7 @@ class MessageHandler:
             )
 
         if session_id:
-            if self._session_store.get(session_id) is None:
+            if await self._session_store.get(session_id) is None:
                 bind_message_context(
                     message_type="a2a",
                     correlation_id=str(response_id) if response_id is not None else None,
@@ -271,9 +271,9 @@ class MessageHandler:
                     ),
                     id=response_id,
                 )
-            self._session_store.extend_ttl(session_id)
+            await self._session_store.extend_ttl(session_id)
         else:
-            session_id = self._session_store.create()
+            session_id = await self._session_store.create()
 
         bind_message_context(
             message_type="a2a",
@@ -292,7 +292,7 @@ class MessageHandler:
         ):
             request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
 
-            self._correlation_store.set(
+            await self._correlation_store.set(
                 request_id_str,
                 PendingAsyncRequest(
                     connection_id=connection_id,
@@ -333,7 +333,7 @@ class MessageHandler:
                         await send_fn(streaming_resp.model_dump_json(by_alias=True))
 
             if got_content:
-                self._correlation_store.get_and_remove(request_id_str)
+                await self._correlation_store.get_and_remove(request_id_str)
                 final_resp = self._a2a_handler.build_a2a_response_from_content(
                     content=accumulated_text,
                     session_id=session_id,

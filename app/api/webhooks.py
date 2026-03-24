@@ -41,7 +41,7 @@ async def _handle_async_response(
 
     Returns (success, error_message).
     """
-    record = correlation_store.get(request_id)
+    record = await correlation_store.get(request_id)
     if record is None:
         return False, "requestId not found or expired"
 

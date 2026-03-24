@@ -25,7 +25,7 @@ async def _sweep_expired_requests(
     while True:
         await asyncio.sleep(sweep_interval)
         try:
-            expired = correlation_store.get_expired(settings.async_response_timeout_seconds)
+            expired = await correlation_store.get_expired(settings.async_response_timeout_seconds)
             if not expired:
                 continue
 
