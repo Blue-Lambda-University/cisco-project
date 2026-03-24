@@ -22,7 +22,6 @@ from app.models.messages import PAYLOAD_MODELS, IncomingMessage
 from app.models.responses import (
     A2AErrorDetail,
     A2AErrorResponse,
-    A2AResponse,
     OutgoingResponse,
     UIResponse,
 )
@@ -62,8 +61,11 @@ class MessageHandler:
         self._agent_client = agent_client
 
     async def handle(
-        self, raw_message: str
-    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse:
+        self,
+        raw_message: str,
+        connection_id: str | None = None,
+        send_fn: Callable[[str], Awaitable[None]] | None = None,
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a raw WebSocket message.
         
@@ -71,6 +73,8 @@ class MessageHandler:
         
         Args:
             raw_message: The raw message string from the WebSocket.
+            connection_id: WebSocket connection identifier (needed for correlation store).
+            send_fn: Callback to push intermediate streaming frames to the client.
             
         Returns:
             OutgoingResponse for JSON messages, or A2AResponse for plain text queries.
@@ -89,7 +93,9 @@ class MessageHandler:
         # A2A JSON-RPC (agent/sendMessage): handle before legacy IncomingMessage
         a2a_request = parse_a2a_request(data)
         if a2a_request is not None:
-            return await self._handle_a2a_request(a2a_request)
+            return await self._handle_a2a_request(
+                a2a_request, connection_id=connection_id, send_fn=send_fn,
+            )
 
         # Validate message structure (legacy type/payload/metadata)
         try:
@@ -191,8 +197,11 @@ class MessageHandler:
             )
 
     async def _handle_a2a_request(
-        self, a2a_request: A2ASendMessageRequest
-    ) -> A2AResponse | A2AErrorResponse | UIResponse | None:
+        self,
+        a2a_request: A2ASendMessageRequest,
+        connection_id: str | None = None,
+        send_fn: Callable[[str], Awaitable[None]] | None = None,
+    ) -> UIResponse | A2AErrorResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler."""
         extracted = extract_a2a_ids_and_query(a2a_request)
         query_text = extracted.query_text
@@ -272,26 +281,21 @@ class MessageHandler:
             session_id=session_id,
         )
 
-        # ── Async flow: forward to orchestrator, response comes back via webhook ──
-        self._logger.info(
-            "async_flow_check",
-            has_settings=self._settings is not None,
-            async_flow_enabled=self._settings.async_flow_enabled if self._settings else False,
-            has_agent_client=self._agent_client is not None,
-            has_correlation_store=self._correlation_store is not None,
-        )
+        # ── Streaming flow: POST to orchestrator, read SSE stream, push to WS ──
         if (
             self._settings
             and self._settings.async_flow_enabled
-            and self._agent_client is not None
+            and self._settings.agent_base_url
+            and connection_id
             and self._correlation_store is not None
+            and self._agent_client is not None
         ):
             request_id_str = str(response_id) if response_id is not None else str(uuid.uuid4())
 
             self._correlation_store.set(
                 request_id_str,
                 PendingAsyncRequest(
-                    connection_id=getattr(self, "_connection_id", ""),
+                    connection_id=connection_id,
                     session_id=session_id or "",
                     context_id=conversation_id or "",
                     conversation_id=conversation_id or "",
@@ -301,7 +305,10 @@ class MessageHandler:
                 ),
             )
 
-            accepted = await self._agent_client.send_async(
+            accumulated_text = ""
+            got_content = False
+
+            async for event in self._agent_client.send_streaming(
                 query_text=query_text,
                 request_id=request_id_str,
                 session_id=session_id,
@@ -311,21 +318,42 @@ class MessageHandler:
                 referrer=referrer,
                 user_id=user_id,
                 email=email,
-            )
-            if accepted:
-                self._logger.info(
-                    "a2a_request_forwarded_async",
-                    request_id=request_id_str,
-                    session_id=session_id,
-                )
-                return None
+            ):
+                text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
+                if text:
+                    accumulated_text += text
+                    got_content = True
+                    if send_fn and not is_final:
+                        streaming_resp = UIResponse(
+                            context_id=conversation_id or "",
+                            response=accumulated_text,
+                            conversation_id=conversation_id or "",
+                            status="streaming",
+                        )
+                        await send_fn(streaming_resp.model_dump_json(by_alias=True))
 
-            # Orchestrator rejected — clean up and fall through to canned response
-            self._correlation_store.get_and_remove(request_id_str)
+            if got_content:
+                self._correlation_store.get_and_remove(request_id_str)
+                final_resp = self._a2a_handler.build_a2a_response_from_content(
+                    content=accumulated_text,
+                    session_id=session_id,
+                    request_id=request_id_str,
+                    context_id=conversation_id,
+                    conversation_id=conversation_id,
+                    cp_gutc_id=cp_gutc_id,
+                    referrer=referrer,
+                    query_text=query_text,
+                )
+                if send_fn:
+                    await send_fn(final_resp.model_dump_json(by_alias=True))
+                    return None
+                return final_resp
+
             self._logger.warning(
-                "a2a_async_forward_failed_falling_back",
+                "streaming_no_content_received",
                 request_id=request_id_str,
             )
+            return None
 
         # ── Canned / local response ──
         self._logger.info(
@@ -368,19 +396,19 @@ class MessageHandler:
         connection_id: str,
         subprotocol: str | None = None,
         send_fn: Callable[[str], Awaitable[None]] | None = None,
-    ) -> OutgoingResponse | A2AResponse | A2AErrorResponse | UIResponse | None:
+    ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a message with additional connection context.
 
         Returns:
             OutgoingResponse for legacy JSON; A2AResponse or A2AErrorResponse for A2A;
-            None when the request was forwarded to the orchestrator (async flow).
+            None when the request was forwarded to the orchestrator (streaming flow).
         """
         self._logger = self._logger.bind(
             connection_id=connection_id,
             subprotocol=subprotocol,
         )
-        self._connection_id = connection_id
-        self._send_fn = send_fn
-        
-        return await self.handle(raw_message)
+
+        return await self.handle(
+            raw_message, connection_id=connection_id, send_fn=send_fn,
+        )
