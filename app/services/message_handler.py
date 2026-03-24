@@ -202,6 +202,7 @@ class MessageHandler:
         cp_gutc_id = extracted.cp_gutc_id or ""
         referrer = extracted.referrer or ""
         is_first_chat = extracted.is_first_chat
+        message_id = extracted.message_id or str(uuid.uuid4())
         response_id = a2a_request.id if a2a_request.id is not None else None
 
         # First chat → return welcome message immediately (no orchestrator call)
@@ -303,6 +304,7 @@ class MessageHandler:
                 request_id=request_id_str,
                 session_id=session_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
             )
