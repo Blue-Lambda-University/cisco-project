@@ -52,6 +52,7 @@ class InMemorySessionStore:
         self._idle_ttl_seconds = idle_ttl_seconds
         self._max_lifetime_seconds = max_lifetime_seconds
         self._sessions: dict[str, Session] = {}
+        self._conversation_map: dict[str, str] = {}
         self._logger = logger.bind(component="session_store")
 
     def get(self, session_id: str, now: datetime | None = None) -> Session | None:
@@ -125,6 +126,10 @@ class InMemorySessionStore:
         """Add seconds to a datetime (timezone-aware safe)."""
         from datetime import timedelta
         return dt + timedelta(seconds=seconds)
+
+    def set_conversation_session(self, conversation_id: str, session_id: str) -> None:
+        """Store conversationId -> sessionId mapping (in-memory)."""
+        self._conversation_map[conversation_id] = session_id
 
     def get_stats(self) -> dict[str, Any]:
         """Return store stats for monitoring."""

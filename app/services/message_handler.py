@@ -201,7 +201,32 @@ class MessageHandler:
         conversation_id = extracted.conversation_id
         cp_gutc_id = extracted.cp_gutc_id or ""
         referrer = extracted.referrer or ""
+        is_first_chat = extracted.is_first_chat
         response_id = a2a_request.id if a2a_request.id is not None else None
+
+        # First chat → return welcome message immediately (no orchestrator call)
+        if is_first_chat:
+            if not session_id:
+                session_id = self._session_store.create()
+            if conversation_id:
+                self._session_store.set_conversation_session(conversation_id, session_id)
+            bind_message_context(
+                message_type="a2a",
+                correlation_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+            )
+            self._logger.info(
+                "first_chat_welcome",
+                session_id=session_id,
+                conversation_id=conversation_id,
+            )
+            return self._a2a_handler.build_welcome_response(
+                session_id=session_id,
+                request_id=response_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+            )
 
         if not query_text:
             bind_message_context(
