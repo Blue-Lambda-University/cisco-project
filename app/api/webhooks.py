@@ -34,11 +34,16 @@ async def _handle_async_response(
 ) -> tuple[bool, str]:
     """
     Look up connection by requestId, build rich UI response, send to WebSocket.
+
+    Uses non-destructive get() so the entry survives for multiple webhook
+    responses that share the same requestId (Scenario B: 1 user msg → N responses).
+    Cleanup happens via TTL expiry or WS disconnect.
+
     Returns (success, error_message).
     """
-    record = correlation_store.get_and_remove(request_id)
+    record = correlation_store.get(request_id)
     if record is None:
-        return False, "requestId not found or already consumed"
+        return False, "requestId not found or expired"
 
     session_id = inner.session_id or record.session_id
     context_id = inner.context_id or record.context_id
