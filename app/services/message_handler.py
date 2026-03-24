@@ -194,21 +194,14 @@ class MessageHandler:
         self, a2a_request: A2ASendMessageRequest
     ) -> A2AResponse | A2AErrorResponse | UIResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler."""
-        query_text, request_id, session_id, conversation_id = extract_a2a_ids_and_query(
-            a2a_request
-        )
+        extracted = extract_a2a_ids_and_query(a2a_request)
+        query_text = extracted.query_text
+        request_id = extracted.request_id
+        session_id = extracted.session_id
+        conversation_id = extracted.conversation_id
+        cp_gutc_id = extracted.cp_gutc_id or ""
+        referrer = extracted.referrer or ""
         response_id = a2a_request.id if a2a_request.id is not None else None
-
-        # Extract optional metadata fields
-        metadata = {}
-        if a2a_request.params and a2a_request.params.message:
-            msg = a2a_request.params.message
-            if hasattr(msg, "metadata") and isinstance(msg.metadata, dict):
-                metadata = msg.metadata
-            elif hasattr(msg, "metadata") and msg.metadata is not None:
-                metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-        cp_gutc_id = metadata.get("CP_GUTC_Id") or metadata.get("cp_gutc_id") or ""
-        referrer = metadata.get("referrer") or ""
 
         if not query_text:
             bind_message_context(
