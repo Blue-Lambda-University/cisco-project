@@ -227,7 +227,10 @@ class MessageHandler:
         # First chat → return welcome message immediately (no orchestrator call)
         if is_first_chat:
             if not session_id:
-                session_id = await self._session_store.create()
+                session_id = await self._session_store.create(
+                    user_token=user_token,
+                    email_address=email_address,
+                )
             if conversation_id:
                 await self._session_store.set_conversation_session(conversation_id, session_id)
             session = await self._session_store.get(session_id)
@@ -284,7 +287,10 @@ class MessageHandler:
                 )
             await self._session_store.extend_ttl(session_id)
         else:
-            session_id = await self._session_store.create()
+            session_id = await self._session_store.create(
+                user_token=user_token,
+                email_address=email_address,
+            )
 
         session = await self._session_store.get(session_id)
         session_expires_at = session.expires_at if session else None
