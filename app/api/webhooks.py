@@ -43,7 +43,7 @@ async def _handle_async_response(
     """
     record = await correlation_store.get(request_id)
     if record is None:
-        return False, "requestId not found or expired"
+        return False, "requestId not found or expired (TTL)"
 
     session_id = inner.session_id or record.session_id
     context_id = inner.context_id or record.context_id
@@ -120,4 +120,7 @@ async def webhook_async_response(
     )
     if success:
         return JSONResponse(status_code=200, content={"status": "delivered"})
+    if "TTL" in err:
+        logger.info("webhook_async_response_expired", request_id=rid)
+        return JSONResponse(status_code=200, content={"status": "expired"})
     return JSONResponse(status_code=503, content={"error": err})
