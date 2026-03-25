@@ -28,6 +28,15 @@ class AgentClient:
         self._timeout = timeout_seconds
         self._logger = logger.bind(component="agent_client")
 
+    @staticmethod
+    def _build_forwarded_headers(user_token: str, email_address: str) -> dict[str, str]:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if user_token:
+            headers["Authorization"] = user_token
+        if email_address:
+            headers["X-User-Email"] = email_address
+        return headers
+
     async def send_async(
         self,
         query_text: str,
@@ -39,6 +48,8 @@ class AgentClient:
         referrer: str | None = None,
         user_id: str | None = None,
         email: str | None = None,
+        user_token: str = "",
+        email_address: str = "",
     ) -> bool:
         """
         Build JSON-RPC 2.0 payload and POST to the orchestrator /a2a/ endpoint.
@@ -69,10 +80,11 @@ class AgentClient:
         )
         payload = body.model_dump(by_alias=True, exclude_none=True)
         url = f"{self._base_url}/a2a/"
+        headers = self._build_forwarded_headers(user_token, email_address)
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=headers)
             if resp.is_success:
                 self._logger.info(
                     "agent_request_sent",
@@ -102,6 +114,8 @@ class AgentClient:
         referrer: str | None = None,
         user_id: str | None = None,
         email: str | None = None,
+        user_token: str = "",
+        email_address: str = "",
     ) -> AsyncIterator[dict]:
         """POST to orchestrator and yield parsed SSE events as they arrive."""
         metadata = OutgoingMessageMetadata(
@@ -129,11 +143,12 @@ class AgentClient:
         )
         payload = body.model_dump(by_alias=True, exclude_none=True)
         url = f"{self._base_url}/a2a/"
+        forwarded_headers = self._build_forwarded_headers(user_token, email_address)
 
         timeout = httpx.Timeout(30.0, read=120.0)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("POST", url, json=payload) as response:
+                async with client.stream("POST", url, json=payload, headers=forwarded_headers) as response:
                     async for line in response.aiter_lines():
                         if line.startswith("data:"):
                             data_str = line[5:].strip()

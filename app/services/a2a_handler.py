@@ -282,6 +282,7 @@ class A2AHandler:
         conversation_id: str | None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
+        session_expires_at: datetime | None = None,
     ) -> UIResponse:
         """
         Handle an A2A JSON request (agent/sendMessage): match query, build response with ids.
@@ -308,6 +309,7 @@ class A2AHandler:
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
             query_text=query,
+            session_expires_at=session_expires_at,
         )
         processing_time_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
         self._logger.info(
@@ -325,11 +327,11 @@ class A2AHandler:
         context_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
+        session_expires_at: datetime | None = None,
     ) -> UIResponse:
         """Build welcome UIResponse (first-chat). UI replaces {user_name}."""
-        now = datetime.utcnow()
-        timestamp_str = now.isoformat() + "Z"
         response_id = str(request_id) if request_id is not None else None
+        expiration_str = (session_expires_at.isoformat() + "Z") if session_expires_at else None
 
         a2a_inner: dict[str, Any] = {
             "id": response_id,
@@ -345,7 +347,7 @@ class A2AHandler:
                 ],
                 "role": "assistant",
                 "metadata": {
-                    "timestamp": timestamp_str,
+                    "session_expiration_time": expiration_str,
                     "sessionId": session_id,
                     "conversationId": context_id or "",
                     "CP_GUTC_Id": cp_gutc_id,
@@ -448,6 +450,7 @@ class A2AHandler:
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
         query_text: str | None = None,
+        session_expires_at: datetime | None = None,
     ) -> UIResponse:
         """
         Build a UIResponse from orchestrator content (string or object).
@@ -462,6 +465,7 @@ class A2AHandler:
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
             query_text=query_text,
+            session_expires_at=session_expires_at,
         )
 
     def _build_a2a_response(
@@ -474,6 +478,7 @@ class A2AHandler:
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
         query_text: str | None = None,
+        session_expires_at: datetime | None = None,
     ) -> UIResponse:
         """
         Build a UIResponse wrapping the A2A result (success / normal-query shape).
@@ -483,11 +488,11 @@ class A2AHandler:
         ``history`` contains user + agent messages per the spec.
         ``metadata`` lives at the ``a2aResponse`` level.
         """
-        now = datetime.utcnow()
-        timestamp_str = now.isoformat() + "Z"
         response_id = str(request_id) if request_id is not None else None
         resolved_context_id = context_id or str(uuid.uuid4())
         task_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+        expiration_str = (session_expires_at.isoformat() + "Z") if session_expires_at else None
 
         history: list[dict[str, Any]] = []
         if query_text:
@@ -523,10 +528,10 @@ class A2AHandler:
                 "history": history,
                 "id": task_id,
                 "kind": "task",
-                "status": {"state": "completed", "timestamp": timestamp_str},
+                "status": {"state": "completed", "timestamp": now.isoformat() + "Z"},
             },
             "metadata": {
-                "timestamp": timestamp_str,
+                "session_expiration_time": expiration_str,
                 "sessionId": session_id,
                 "conversationId": conversation_id or "",
                 "CP_GUTC_Id": cp_gutc_id,

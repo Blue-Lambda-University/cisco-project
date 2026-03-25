@@ -65,6 +65,8 @@ class MessageHandler:
         raw_message: str,
         connection_id: str | None = None,
         send_fn: Callable[[str], Awaitable[None]] | None = None,
+        user_token: str = "",
+        email_address: str = "",
     ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a raw WebSocket message.
@@ -94,7 +96,11 @@ class MessageHandler:
         a2a_request = parse_a2a_request(data)
         if a2a_request is not None:
             return await self._handle_a2a_request(
-                a2a_request, connection_id=connection_id, send_fn=send_fn,
+                a2a_request,
+                connection_id=connection_id,
+                send_fn=send_fn,
+                user_token=user_token,
+                email_address=email_address,
             )
 
         # Validate message structure (legacy type/payload/metadata)
@@ -201,6 +207,8 @@ class MessageHandler:
         a2a_request: A2ASendMessageRequest,
         connection_id: str | None = None,
         send_fn: Callable[[str], Awaitable[None]] | None = None,
+        user_token: str = "",
+        email_address: str = "",
     ) -> UIResponse | A2AErrorResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler."""
         extracted = extract_a2a_ids_and_query(a2a_request)
@@ -222,6 +230,8 @@ class MessageHandler:
                 session_id = await self._session_store.create()
             if conversation_id:
                 await self._session_store.set_conversation_session(conversation_id, session_id)
+            session = await self._session_store.get(session_id)
+            session_expires_at = session.expires_at if session else None
             bind_message_context(
                 message_type="a2a",
                 correlation_id=str(response_id) if response_id is not None else None,
@@ -238,6 +248,7 @@ class MessageHandler:
                 context_id=conversation_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
+                session_expires_at=session_expires_at,
             )
 
         if not query_text:
@@ -274,6 +285,9 @@ class MessageHandler:
             await self._session_store.extend_ttl(session_id)
         else:
             session_id = await self._session_store.create()
+
+        session = await self._session_store.get(session_id)
+        session_expires_at = session.expires_at if session else None
 
         bind_message_context(
             message_type="a2a",
@@ -318,6 +332,8 @@ class MessageHandler:
                 referrer=referrer,
                 user_id=user_id,
                 email=email,
+                user_token=user_token,
+                email_address=email_address,
             ):
                 text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
                 if text and not (is_final and got_content):
@@ -334,6 +350,7 @@ class MessageHandler:
                     cp_gutc_id=cp_gutc_id,
                     referrer=referrer,
                     query_text=query_text,
+                    session_expires_at=session_expires_at,
                 )
                 if send_fn:
                     await send_fn(final_resp.model_dump_json(by_alias=True))
@@ -360,6 +377,7 @@ class MessageHandler:
             conversation_id=conversation_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            session_expires_at=session_expires_at,
         )
 
     def _format_validation_errors(self, error: ValidationError) -> list[dict[str, Any]]:
@@ -387,6 +405,8 @@ class MessageHandler:
         connection_id: str,
         subprotocol: str | None = None,
         send_fn: Callable[[str], Awaitable[None]] | None = None,
+        user_token: str = "",
+        email_address: str = "",
     ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a message with additional connection context.
@@ -401,5 +421,9 @@ class MessageHandler:
         )
 
         return await self.handle(
-            raw_message, connection_id=connection_id, send_fn=send_fn,
+            raw_message,
+            connection_id=connection_id,
+            send_fn=send_fn,
+            user_token=user_token,
+            email_address=email_address,
         )

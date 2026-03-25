@@ -82,6 +82,9 @@ async def handle_connection(
         subprotocol: Negotiated subprotocol.
         settings: Application settings (for heartbeat config).
     """
+    user_token = websocket.headers.get("authorization", "")
+    email_address = websocket.headers.get("x-user-email", "")
+
     connection_info = await connection_manager.connect(
         websocket=websocket,
         subprotocol=subprotocol,
@@ -132,6 +135,8 @@ async def handle_connection(
                 connection_id=connection_info.connection_id,
                 subprotocol=subprotocol,
                 send_fn=websocket.send_text,
+                user_token=user_token,
+                email_address=email_address,
             )
             
             if response is None:
