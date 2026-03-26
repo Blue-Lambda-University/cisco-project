@@ -82,9 +82,9 @@ class Settings(BaseSettings):
         description="Session idle TTL in seconds (e.g. 30 min). Extended on each request."
     )
     session_max_lifetime_seconds: int | None = Field(
-        default=86400,
+        default=28800,
         ge=60,
-        description="Max session lifetime in seconds (e.g. 8h). None to allow unbounded extension."
+        description="Max session lifetime in seconds (8h). None to allow unbounded extension."
     )
 
     # Redis configuration (session persistence)

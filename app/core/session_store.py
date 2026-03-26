@@ -14,7 +14,7 @@ class SessionStore(Protocol):
     """Protocol for session store backends (in-memory or Redis)."""
 
     async def get(self, session_id: str, now: datetime | None = None) -> "Session | None": ...
-    async def create(self, now: datetime | None = None, user_token: str = "", email_address: str = "") -> str: ...
+    async def create(self, now: datetime | None = None, user_token: str = "", email_address: str = "", ccoid: str = "") -> str: ...
     async def extend_ttl(self, session_id: str, now: datetime | None = None) -> bool: ...
     def get_stats(self) -> dict[str, Any]: ...
 
@@ -29,6 +29,7 @@ class Session:
     last_activity_at: datetime | None = None
     user_token: str = ""
     email_address: str = ""
+    ccoid: str = ""
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Return True if the session has expired."""
@@ -74,6 +75,7 @@ class InMemorySessionStore:
         now: datetime | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> str:
         if now is None:
             now = datetime.utcnow()
@@ -86,6 +88,7 @@ class InMemorySessionStore:
             last_activity_at=now,
             user_token=user_token,
             email_address=email_address,
+            ccoid=ccoid,
         )
         self._sessions[session_id] = session
         self._logger.info(
@@ -141,6 +144,7 @@ REDIS_FIELD_CREATED_AT = "created_at"
 REDIS_FIELD_LAST_ACTIVITY_AT = "last_activity_at"
 REDIS_FIELD_USER_TOKEN = "user_token"
 REDIS_FIELD_EMAIL_ADDRESS = "email_address"
+REDIS_FIELD_CCOID = "ccoid"
 
 
 class RedisSessionStore:
@@ -214,6 +218,7 @@ class RedisSessionStore:
             last_activity_at=last_activity_at,
             user_token=raw.get(REDIS_FIELD_USER_TOKEN, ""),
             email_address=raw.get(REDIS_FIELD_EMAIL_ADDRESS, ""),
+            ccoid=raw.get(REDIS_FIELD_CCOID, ""),
         )
 
     async def create(
@@ -221,6 +226,7 @@ class RedisSessionStore:
         now: datetime | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> str:
         """Create a new session in Redis and return its ID."""
         if now is None:
@@ -236,6 +242,7 @@ class RedisSessionStore:
             REDIS_FIELD_LAST_ACTIVITY_AT: now.isoformat(),
             REDIS_FIELD_USER_TOKEN: user_token,
             REDIS_FIELD_EMAIL_ADDRESS: email_address,
+            REDIS_FIELD_CCOID: ccoid,
         })
         ttl_seconds = max(1, int((expires_at - now).total_seconds()))
         await client.expire(key, ttl_seconds)

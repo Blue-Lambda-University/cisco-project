@@ -29,12 +29,16 @@ class AgentClient:
         self._logger = logger.bind(component="agent_client")
 
     @staticmethod
-    def _build_forwarded_headers(user_token: str, email_address: str) -> dict[str, str]:
+    def _build_forwarded_headers(
+        user_token: str, email_address: str, ccoid: str = "",
+    ) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if user_token:
-            headers["Authorization"] = user_token
+            headers["X-User-Token"] = user_token
         if email_address:
             headers["X-User-Email"] = email_address
+        if ccoid:
+            headers["X-User-ID"] = ccoid
         return headers
 
     async def send_async(
@@ -50,6 +54,7 @@ class AgentClient:
         email: str | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> bool:
         """
         Build JSON-RPC 2.0 payload and POST to the orchestrator /a2a/ endpoint.
@@ -80,7 +85,16 @@ class AgentClient:
         )
         payload = body.model_dump(by_alias=True, exclude_none=True)
         url = f"{self._base_url}/a2a/"
-        headers = self._build_forwarded_headers(user_token, email_address)
+        headers = self._build_forwarded_headers(user_token, email_address, ccoid=ccoid)
+
+        self._logger.info(
+            "forwarding_headers_to_orchestrator",
+            request_id=request_id,
+            headers_keys=list(headers.keys()),
+            email_address=headers.get("X-User-Email", ""),
+            ccoid=headers.get("X-User-ID", ""),
+            user_token_present="X-User-Token" in headers,
+        )
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -116,6 +130,7 @@ class AgentClient:
         email: str | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> AsyncIterator[dict]:
         """POST to orchestrator and yield parsed SSE events as they arrive."""
         metadata = OutgoingMessageMetadata(
@@ -143,7 +158,16 @@ class AgentClient:
         )
         payload = body.model_dump(by_alias=True, exclude_none=True)
         url = f"{self._base_url}/a2a/"
-        forwarded_headers = self._build_forwarded_headers(user_token, email_address)
+        forwarded_headers = self._build_forwarded_headers(user_token, email_address, ccoid=ccoid)
+
+        self._logger.info(
+            "forwarding_headers_to_orchestrator",
+            request_id=request_id,
+            headers_keys=list(forwarded_headers.keys()),
+            email_address=forwarded_headers.get("X-User-Email", ""),
+            ccoid=forwarded_headers.get("X-User-ID", ""),
+            user_token_present="X-User-Token" in forwarded_headers,
+        )
 
         timeout = httpx.Timeout(30.0, read=120.0)
         try:

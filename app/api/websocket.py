@@ -82,8 +82,9 @@ async def handle_connection(
         subprotocol: Negotiated subprotocol.
         settings: Application settings (for heartbeat config).
     """
-    user_token = websocket.headers.get("authorization", "")
-    email_address = websocket.headers.get("x-user-email", "")
+    user_token = websocket.headers.get("user_token", "")
+    email_address = websocket.headers.get("email_address", "")
+    ccoid = websocket.headers.get("ccoid", "")
 
     connection_info = await connection_manager.connect(
         websocket=websocket,
@@ -100,6 +101,13 @@ async def handle_connection(
         connection_id=connection_info.connection_id,
         client_ip=connection_info.client_ip,
         subprotocol=subprotocol,
+    )
+
+    connection_logger.info(
+        "ws_headers_extracted",
+        user_token_present=bool(user_token),
+        email_address=email_address,
+        ccoid=ccoid,
     )
 
     rate_per_second = settings.rate_limit_messages_per_minute / 60.0
@@ -137,6 +145,7 @@ async def handle_connection(
                 send_fn=websocket.send_text,
                 user_token=user_token,
                 email_address=email_address,
+                ccoid=ccoid,
             )
             
             if response is None:

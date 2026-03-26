@@ -67,6 +67,7 @@ class MessageHandler:
         send_fn: Callable[[str], Awaitable[None]] | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a raw WebSocket message.
@@ -101,6 +102,7 @@ class MessageHandler:
                 send_fn=send_fn,
                 user_token=user_token,
                 email_address=email_address,
+                ccoid=ccoid,
             )
 
         # Validate message structure (legacy type/payload/metadata)
@@ -209,6 +211,7 @@ class MessageHandler:
         send_fn: Callable[[str], Awaitable[None]] | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> UIResponse | A2AErrorResponse | None:
         """Handle A2A agent/sendMessage: extract query/ids, session get/create/extend, call A2A handler."""
         extracted = extract_a2a_ids_and_query(a2a_request)
@@ -230,6 +233,7 @@ class MessageHandler:
                 session_id = await self._session_store.create(
                     user_token=user_token,
                     email_address=email_address,
+                    ccoid=ccoid,
                 )
             if conversation_id:
                 await self._session_store.set_conversation_session(conversation_id, session_id)
@@ -290,6 +294,7 @@ class MessageHandler:
             session_id = await self._session_store.create(
                 user_token=user_token,
                 email_address=email_address,
+                ccoid=ccoid,
             )
 
         session = await self._session_store.get(session_id)
@@ -340,6 +345,7 @@ class MessageHandler:
                 email=email,
                 user_token=user_token,
                 email_address=email_address,
+                ccoid=ccoid,
             ):
                 text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
                 if text and not (is_final and got_content):
@@ -413,6 +419,7 @@ class MessageHandler:
         send_fn: Callable[[str], Awaitable[None]] | None = None,
         user_token: str = "",
         email_address: str = "",
+        ccoid: str = "",
     ) -> OutgoingResponse | UIResponse | A2AErrorResponse | None:
         """
         Handle a message with additional connection context.
@@ -432,4 +439,5 @@ class MessageHandler:
             send_fn=send_fn,
             user_token=user_token,
             email_address=email_address,
+            ccoid=ccoid,
         )
