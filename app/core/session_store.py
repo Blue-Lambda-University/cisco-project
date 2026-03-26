@@ -16,6 +16,8 @@ class SessionStore(Protocol):
     async def get(self, session_id: str, now: datetime | None = None) -> "Session | None": ...
     async def create(self, now: datetime | None = None, user_token: str = "", email_address: str = "", ccoid: str = "") -> str: ...
     async def extend_ttl(self, session_id: str, now: datetime | None = None) -> bool: ...
+    async def renew_session(self, session_id: str, now: datetime | None = None) -> "Session | None": ...
+    async def delete_session(self, session_id: str) -> bool: ...
     def get_stats(self) -> dict[str, Any]: ...
 
 
@@ -117,6 +119,32 @@ class InMemorySessionStore:
             expires_at=new_expires.isoformat(),
         )
         return True
+
+    async def renew_session(self, session_id: str, now: datetime | None = None) -> Session | None:
+        """Reset created_at to now and set expires_at to a full new max lifetime window."""
+        session = await self.get(session_id, now=now)
+        if session is None:
+            return None
+        if now is None:
+            now = datetime.utcnow()
+        session.created_at = now
+        lifetime = self._max_lifetime_seconds or self._idle_ttl_seconds
+        session.expires_at = now + timedelta(seconds=lifetime)
+        session.last_activity_at = now
+        self._logger.info(
+            "session_renewed",
+            session_id=session_id,
+            expires_at=session.expires_at.isoformat(),
+        )
+        return session
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Remove a session entirely."""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            self._logger.info("session_deleted", session_id=session_id)
+            return True
+        return False
 
     async def set_conversation_session(self, conversation_id: str, session_id: str) -> None:
         """Store conversationId -> sessionId mapping (in-memory)."""
@@ -279,6 +307,44 @@ class RedisSessionStore:
             expires_at=new_expires.isoformat(),
         )
         return True
+
+    async def renew_session(self, session_id: str, now: datetime | None = None) -> Session | None:
+        """Reset created_at to now and set expires_at to a full new max lifetime window."""
+        session = await self.get(session_id, now=now)
+        if session is None:
+            return None
+        if now is None:
+            now = datetime.utcnow()
+        lifetime = self._max_lifetime_seconds or self._idle_ttl_seconds
+        new_expires = now + timedelta(seconds=lifetime)
+        key = self._key(session_id)
+        client = self._get_client()
+        await client.hset(key, mapping={
+            REDIS_FIELD_CREATED_AT: now.isoformat(),
+            REDIS_FIELD_EXPIRES_AT: new_expires.isoformat(),
+            REDIS_FIELD_LAST_ACTIVITY_AT: now.isoformat(),
+        })
+        ttl_seconds = max(1, int((new_expires - now).total_seconds()))
+        await client.expire(key, ttl_seconds)
+        session.created_at = now
+        session.expires_at = new_expires
+        session.last_activity_at = now
+        self._logger.info(
+            "session_renewed",
+            session_id=session_id,
+            expires_at=new_expires.isoformat(),
+        )
+        return session
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Remove a session and its Redis key entirely."""
+        client = self._get_client()
+        key = self._key(session_id)
+        deleted = await client.delete(key)
+        if deleted:
+            self._logger.info("session_deleted", session_id=session_id)
+            return True
+        return False
 
     async def set_conversation_session(self, conversation_id: str, session_id: str) -> None:
         """Store conversationId -> sessionId mapping. TTL = idle_ttl_seconds."""

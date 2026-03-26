@@ -363,6 +363,92 @@ class A2AHandler:
             a2a_response=a2a_inner,
         )
 
+    def build_extend_session_response(
+        self,
+        session_id: str | None = None,
+        request_id: str | int | None = None,
+        context_id: str | None = None,
+        cp_gutc_id: str | None = None,
+        referrer: str | None = None,
+        session_expires_at: datetime | None = None,
+    ) -> UIResponse:
+        """Build UIResponse confirming the session was renewed for a full 8-hour window."""
+        response_id = str(request_id) if request_id is not None else None
+        expiration_str = (session_expires_at.isoformat() + "Z") if session_expires_at else None
+        text = "Your session has been extended."
+
+        a2a_inner: dict[str, Any] = {
+            "id": response_id,
+            "jsonrpc": "2.0",
+            "result": {
+                "contextId": context_id or "",
+                "artifacts": [
+                    {
+                        "artifactId": "",
+                        "name": "extend_session_confirmation",
+                        "parts": [{"kind": "text", "text": text}],
+                    }
+                ],
+                "role": "assistant",
+                "metadata": {
+                    "session_expiration_time": expiration_str,
+                    "sessionId": session_id,
+                    "conversationId": context_id or "",
+                    "CP_GUTC_Id": cp_gutc_id,
+                    "referrer": referrer,
+                },
+            },
+        }
+
+        return UIResponse(
+            context_id=context_id or "",
+            response=text,
+            conversation_id=context_id or "",
+            a2a_response=a2a_inner,
+        )
+
+    def build_end_session_response(
+        self,
+        session_id: str | None = None,
+        request_id: str | int | None = None,
+        context_id: str | None = None,
+        cp_gutc_id: str | None = None,
+        referrer: str | None = None,
+    ) -> UIResponse:
+        """Build UIResponse confirming the session was ended."""
+        response_id = str(request_id) if request_id is not None else None
+        text = "Your session has ended."
+
+        a2a_inner: dict[str, Any] = {
+            "id": response_id,
+            "jsonrpc": "2.0",
+            "result": {
+                "contextId": context_id or "",
+                "artifacts": [
+                    {
+                        "artifactId": "",
+                        "name": "end_session_confirmation",
+                        "parts": [{"kind": "text", "text": text}],
+                    }
+                ],
+                "role": "assistant",
+                "metadata": {
+                    "session_expiration_time": None,
+                    "sessionId": session_id,
+                    "conversationId": context_id or "",
+                    "CP_GUTC_Id": cp_gutc_id,
+                    "referrer": referrer,
+                },
+            },
+        }
+
+        return UIResponse(
+            context_id=context_id or "",
+            response=text,
+            conversation_id=context_id or "",
+            a2a_response=a2a_inner,
+        )
+
     @staticmethod
     def extract_text_from_sse_event(event: dict) -> tuple[str, str, bool]:
         """

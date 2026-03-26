@@ -24,13 +24,13 @@ class A2AMessage(BaseModel):
 
 
 class A2ARequestMetadata(BaseModel):
-    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, isFirstChat, userId, email)."""
+    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, requestType, userId, email)."""
 
     session_id: str | None = Field(default=None, alias="sessionId")
     conversation_id: str | None = Field(default=None, alias="conversationId")
     cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id")
     referrer: str | None = Field(default=None)
-    is_first_chat: bool = Field(default=False, alias="isFirstChat")
+    request_type: str | None = Field(default=None, alias="requestType")
     user_id: str | None = Field(default=None, alias="userId")
     email: str | None = Field(default=None)
 
@@ -82,7 +82,7 @@ class A2AExtracted:
 
     __slots__ = (
         "query_text", "request_id", "session_id", "conversation_id",
-        "cp_gutc_id", "referrer", "is_first_chat", "user_id", "email", "message_id",
+        "cp_gutc_id", "referrer", "request_type", "user_id", "email", "message_id",
     )
 
     def __init__(
@@ -93,7 +93,7 @@ class A2AExtracted:
         conversation_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-        is_first_chat: bool = False,
+        request_type: str | None = None,
         user_id: str | None = None,
         email: str | None = None,
         message_id: str | None = None,
@@ -104,7 +104,7 @@ class A2AExtracted:
         self.conversation_id = conversation_id
         self.cp_gutc_id = cp_gutc_id
         self.referrer = referrer
-        self.is_first_chat = is_first_chat
+        self.request_type = request_type
         self.user_id = user_id
         self.email = email
         self.message_id = message_id
@@ -122,7 +122,7 @@ def extract_a2a_ids_and_query(request: A2ASendMessageRequest) -> A2AExtracted:
         result.conversation_id = (meta.conversation_id or "").strip() or None
         result.cp_gutc_id = (meta.cp_gutc_id or "").strip() or None
         result.referrer = (meta.referrer or "").strip() or None
-        result.is_first_chat = getattr(meta, "is_first_chat", False)
+        result.request_type = (meta.request_type or "").strip() or None
         result.user_id = (meta.user_id or "").strip() or None
         result.email = (meta.email or "").strip() or None
 

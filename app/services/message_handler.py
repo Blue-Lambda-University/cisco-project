@@ -221,14 +221,14 @@ class MessageHandler:
         conversation_id = extracted.conversation_id
         cp_gutc_id = extracted.cp_gutc_id or ""
         referrer = extracted.referrer or ""
-        is_first_chat = extracted.is_first_chat
+        request_type = extracted.request_type
         message_id = extracted.message_id or str(uuid.uuid4())
         user_id = extracted.user_id
         email = extracted.email
         response_id = a2a_request.id if a2a_request.id is not None else None
 
-        # First chat → return welcome message immediately (no orchestrator call)
-        if is_first_chat:
+        # ── requestType-based routing (welcome / extend_session / end_session) ──
+        if request_type == "welcome":
             if not session_id:
                 session_id = await self._session_store.create(
                     user_token=user_token,
@@ -245,7 +245,7 @@ class MessageHandler:
                 session_id=session_id,
             )
             self._logger.info(
-                "first_chat_welcome",
+                "request_type_welcome",
                 session_id=session_id,
                 conversation_id=conversation_id,
             )
@@ -258,6 +258,59 @@ class MessageHandler:
                 session_expires_at=session_expires_at,
             )
 
+        if request_type == "extend_session":
+            bind_message_context(
+                message_type="a2a",
+                correlation_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+            )
+            if not session_id or await self._session_store.get(session_id) is None:
+                self._logger.warning("extend_session_no_session", session_id=session_id)
+                return A2AErrorResponse(
+                    jsonrpc="2.0",
+                    error=A2AErrorDetail(
+                        code=-32000,
+                        message="No active session to extend. Start a new session.",
+                    ),
+                    id=response_id,
+                )
+            session = await self._session_store.renew_session(session_id)
+            session_expires_at = session.expires_at if session else None
+            self._logger.info(
+                "request_type_extend_session",
+                session_id=session_id,
+                new_expires_at=session_expires_at.isoformat() if session_expires_at else None,
+            )
+            return self._a2a_handler.build_extend_session_response(
+                session_id=session_id,
+                request_id=response_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+                session_expires_at=session_expires_at,
+            )
+
+        if request_type == "end_session":
+            bind_message_context(
+                message_type="a2a",
+                correlation_id=str(response_id) if response_id is not None else None,
+                session_id=session_id,
+            )
+            if session_id:
+                await self._session_store.delete_session(session_id)
+            self._logger.info(
+                "request_type_end_session",
+                session_id=session_id,
+            )
+            return self._a2a_handler.build_end_session_response(
+                session_id=session_id,
+                request_id=response_id,
+                context_id=conversation_id,
+                cp_gutc_id=cp_gutc_id,
+                referrer=referrer,
+            )
+
+        # ── Normal query flow (requestType is None or unrecognized) ──
         if not query_text:
             bind_message_context(
                 message_type="a2a",
