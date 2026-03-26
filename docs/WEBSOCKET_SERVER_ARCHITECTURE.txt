@@ -1,0 +1,579 @@
+WebSocket Server Architecture
+cdcai-microsvc-uber-assistant-frontend
+========================================
+
+
+1. SESSION HANDLING
+-------------------
+
+We manage user sessions with a sliding-window TTL. Every time a user sends a
+message, the session expiry slides forward. Active users don't get logged out,
+but idle sessions auto-expire.
+
+How it works:
+
+  - User sends requestType: "welcome"
+    -> session_store.create(user_token, email_address, ccoid)
+    -> generates a random session_id using secrets.token_urlsafe
+    -> sets expires_at = now + 30 minutes (idle_ttl_seconds)
+    -> stores user_token, email_address, ccoid alongside the session
+    -> returns session_id to UI in the response
+
+  - User sends subsequent message with sessionId
+    -> session_store.get(session_id) - checks if it exists and isn't expired
+    -> if expired or missing -> returns error "Session expired or not found"
+    -> if valid -> session_store.extend_ttl(session_id)
+       -> new expires_at = now + 30 minutes
+       -> capped by max_lifetime_seconds (8 hours from creation)
+    -> session.expires_at is read and sent to UI as session_expiration_time
+
+  - User sends requestType: "extend_session"
+    -> session_store.renew_session(session_id)
+    -> resets created_at to now, sets expires_at to now + 8 hours
+    -> returns new session_expiration_time to UI
+
+  - User sends requestType: "end_session"
+    -> session_store.delete_session(session_id)
+    -> removes the session from Redis/memory
+    -> returns confirmation to UI
+
+Two backends (same interface):
+
+  InMemorySessionStore
+    - Storage: Python dict in process memory
+    - Multi-pod: No (each pod has its own sessions)
+    - Persistence: Lost on restart
+    - Config: UA_WS_SESSION_PERSISTENCE_BACKEND=memory
+
+  RedisSessionStore
+    - Storage: Redis hash per session
+    - Multi-pod: Yes (shared across pods)
+    - Persistence: Survives restart
+    - Config: UA_WS_SESSION_PERSISTENCE_BACKEND=redis
+
+Session fields:
+  session_id        - str   - Random URL-safe token
+  expires_at        - datetime - When the session expires (slides forward)
+  created_at        - datetime - When the session was first created
+  last_activity_at  - datetime - Last message timestamp
+  user_token        - str   - Auth token from WebSocket header
+  email_address     - str   - Email from WebSocket header
+  ccoid             - str   - CCO ID from WebSocket header
+
+Conversation mapping:
+  A separate key ws_user_conversation:{conversationId} -> sessionId maps
+  conversations to sessions so the same session can be reused across turns.
+
+Code:
+  app/core/session_store.py    lines 13-19     SessionStore Protocol
+  app/core/session_store.py    lines 22-38     Session dataclass
+  app/core/session_store.py    lines 41-157    InMemorySessionStore (all methods)
+  app/core/session_store.py    lines 168-339   RedisSessionStore (all methods)
+  app/services/message_handler.py  lines 230-259  Welcome session creation
+  app/services/message_handler.py  lines 242-295  extend_session / end_session logic
+  app/services/message_handler.py  lines 314-339  Session get/extend/create for queries
+  app/config.py                lines 78-88     idle_ttl and max_lifetime settings
+  app/config.py                lines 90-109    Redis host/port/db and backend selector
+
+
+2. RATE THROTTLING
+------------------
+
+Prevents any single WebSocket connection from flooding the server. Uses a
+token bucket algorithm -- allows bursts up to a limit, then throttles to a
+steady rate.
+
+How the token bucket works:
+  - Bucket holds up to burst_size tokens (default: 5)
+  - Tokens refill at rate_per_second (default: 10/min / 60 = 0.167/sec)
+  - Each message consumes 1 token
+  - If no tokens available -> message rejected with retryAfterMs
+
+Practical example:
+  - User can send 5 messages instantly (burst)
+  - After that, roughly 1 message every 6 seconds
+  - If they exceed the rate, they get a JSON-RPC error:
+    {"jsonrpc":"2.0","id":null,"error":{"code":-32429,"message":"Rate limit exceeded","data":{"retryAfterMs":3200}}}
+
+Scope: Per-connection only (not global). Each WebSocket connection gets its own
+bucket instance.
+
+Code:
+  app/core/rate_limiter.py     lines 6-39      TokenBucket class
+  app/api/websocket.py         lines 113-117   Bucket creation per connection
+  app/api/websocket.py         lines 123-132   consume() check on every message
+  app/api/websocket.py         lines 28-37     _build_rate_limit_error()
+  app/config.py                lines 156-165   rate_limit settings
+
+
+3. REDIS
+--------
+
+Provides shared state across multiple pods for sessions and correlation tracking.
+
+Connection setup:
+  Both RedisSessionStore and RedisCorrelationStore use redis.asyncio (async
+  client) with lazy initialization:
+
+    import redis.asyncio as aioredis
+    client = aioredis.from_url(redis_url, decode_responses=True,
+        socket_connect_timeout=5, socket_timeout=5, retry_on_timeout=True)
+
+Key namespaces:
+  ws_user_session:{session_id}        Hash     Session data (expiry, user identity)
+  ws_user_conversation:{conversationId} String  Maps conversationId -> sessionId
+  ws_async_req:{request_id}           String   Tracks pending async requests (JSON)
+
+Redis session hash fields:
+  session_id       -> "abc123..."
+  expires_at       -> "2026-03-25T18:19:38.855801"
+  created_at       -> "2026-03-25T17:49:38.855801"
+  last_activity_at -> "2026-03-25T17:49:38.855801"
+  user_token       -> "Bearer eyJhbGciOi..."
+  email_address    -> "user@cisco.com"
+  ccoid            -> "8526b8c4-803c-49ff-a40f-defddc3976a0"
+  TTL: auto-set via EXPIRE to match expires_at
+
+Commands used (basic only -- compatible with all Redis versions):
+  HSET, HGETALL, SET, GET, DELETE, EXPIRE, SCAN
+  No advanced commands like GETDEL -- removed for compatibility with older
+  Redis server versions.
+
+Code:
+  app/core/session_store.py       lines 138-147    Key prefixes and field constants
+  app/core/session_store.py       lines 171-182    _get_client() lazy async connection
+  app/core/session_store.py       lines 190-222    RedisSessionStore.get()
+  app/core/session_store.py       lines 224-254    RedisSessionStore.create()
+  app/core/session_store.py       lines 256-281    RedisSessionStore.extend_ttl()
+  app/core/correlation_store.py   lines 96-193     RedisCorrelationStore (all methods)
+  app/config.py                   lines 90-109     Redis config
+
+
+4. PAYLOAD DATA HANDSHAKES
+--------------------------
+
+The JSON-RPC 2.0 message contract between UI -> Frontend WS -> Orchestrator ->
+Frontend WS -> UI.
+
+Inbound payload (UI -> Frontend WS):
+
+  {
+    "id": "58e143b2-a9f3-412d-ad26-b1b3b024f97d",
+    "jsonrpc": "2.0",
+    "method": "agent/sendMessage",
+    "params": {
+      "message": {
+        "parts": [{"kind": "text", "text": "get my licensing cases"}],
+        "role": "user"
+      },
+      "metadata": {
+        "CP_GUTC_Id": "23.201.106.229.86984317545124869321",
+        "conversationId": "024a2d42-4145-413c-9595-162008c9308c",
+        "referrer": "https://localhost.cisco.com:8443/chat.html",
+        "sessionId": "c-8hs4PWC8JptsDtcPZtiadcmgMElDDUevkiaG0n47w",
+        "requestType": null
+      }
+    }
+  }
+
+Outbound payload (Frontend WS -> Orchestrator):
+
+  {
+    "jsonrpc": "2.0",
+    "id": "58e143b2-a9f3-412d-ad26-b1b3b024f97d",
+    "method": "message/stream",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"kind": "text", "text": "get my licensing cases"}],
+        "messageId": "ccdc689e-e8b0-4444-acb2-91d22b9037d6",
+        "contextId": "024a2d42-4145-413c-9595-162008c9308c",
+        "metadata": {
+          "user_id": "user-abc123",
+          "conversation_id": "024a2d42-4145-413c-9595-162008c9308c",
+          "session_id": "5498bdb2-d13a-4dd9-ad60-8295d895eec5",
+          "request_id": "58e143b2-a9f3-412d-ad26-b1b3b024f97d",
+          "cp_gutc_id": "8526b8c4-803c-49ff-a40f-defddc3976a0",
+          "referrer": "https://www.cisco.com"
+        }
+      },
+      "configuration": {"acceptedOutputModes": ["text"]}
+    }
+  }
+
+Response payload (Frontend WS -> UI):
+
+  {
+    "contextId": "024a2d42-4145-413c-9595-162008c9308c",
+    "response": "Here are your licensing cases...",
+    "conversationId": "024a2d42-4145-413c-9595-162008c9308c",
+    "a2aResponse": {
+      "id": "58e143b2-a9f3-412d-ad26-b1b3b024f97d",
+      "jsonrpc": "2.0",
+      "result": {
+        "artifacts": [{"artifactId":"...","name":"agent_response","parts":[{"kind":"text","text":"..."}]}],
+        "contextId": "024a2d42-...",
+        "status": {"state": "completed", "timestamp": "2026-03-25T17:49:38Z"}
+      },
+      "metadata": {
+        "session_expiration_time": "2026-03-25T18:49:38.855801Z",
+        "sessionId": "c-8hs4PWC8JptsDtcPZtiadcmgMElDDUevkiaG0n47w",
+        "conversationId": "024a2d42-4145-413c-9595-162008c9308c",
+        "CP_GUTC_Id": "23.201.106.229.86984317545124869321",
+        "referrer": "https://www.cisco.com"
+      }
+    },
+    "error": {},
+    "status": "success"
+  }
+
+Four response paths:
+  Welcome          requestType: "welcome"              No orchestrator call
+  Extend session   requestType: "extend_session"       No orchestrator call
+  End session      requestType: "end_session"          No orchestrator call
+  Streaming        async_flow_enabled + orch URL set   Yes (SSE)
+  Canned/fallback  Orchestrator disabled or unavailable No (local pattern match)
+
+Code:
+  app/models/a2a_requests.py       parse_a2a_request(), extract_a2a_ids_and_query()
+  app/models/webhook_requests.py   OutgoingMessage, OutgoingMessageMetadata
+  app/services/agent_client.py     lines 120-187    send_streaming()
+  app/services/a2a_handler.py      lines 471-549    _build_a2a_response()
+  app/services/a2a_handler.py      lines 323-364    build_welcome_response()
+  app/services/a2a_handler.py      lines 365-430    build_extend/end_session_response()
+  app/services/a2a_handler.py      lines 509-537    build_a2a_response_from_content()
+  app/models/responses.py          lines 16-33      UIResponse model
+
+
+5. HEADER DATA
+--------------
+
+We capture user identity headers from the UI's WebSocket handshake and forward
+them as HTTP headers to the orchestrator. This keeps auth/identity out of the
+JSON payload body.
+
+Header mapping:
+
+  Incoming (from UI)   Variable        Outgoing (to orch)   Stored in Redis
+  user_token           user_token      X-User-Token         Yes
+  email_address        email_address   X-User-Email         Yes
+  ccoid                ccoid           X-User-ID            Yes
+
+Extraction (once per connection):
+
+  user_token    = websocket.headers.get("user_token", "")
+  email_address = websocket.headers.get("email_address", "")
+  ccoid         = websocket.headers.get("ccoid", "")
+
+Extracted outside the message loop -- captured once at connection time, reused
+for every message on that connection.
+
+Forwarding to orchestrator:
+
+  POST /a2a/ HTTP/1.1
+  Host: orchestrator-svc:8006
+  Content-Type: application/json
+  X-User-Token: Bearer eyJhbGciOi...
+  X-User-Email: user@cisco.com
+  X-User-ID: 8526b8c4-803c-49ff-a40f-defddc3976a0
+
+If any header is absent from the WebSocket connection, the corresponding
+outgoing header is simply omitted -- no error.
+
+Code:
+  app/api/websocket.py             lines 85-87     Header extraction
+  app/api/websocket.py             lines 106-111   ws_headers_extracted log
+  app/api/websocket.py             lines 141-149   Passing to handle_with_context()
+  app/services/message_handler.py  lines 414-443   handle_with_context() threading
+  app/services/message_handler.py  lines 63-71     handle() threading
+  app/services/message_handler.py  lines 207-215   _handle_a2a_request() threading
+  app/services/agent_client.py     lines 31-42     _build_forwarded_headers()
+  app/services/agent_client.py     lines 88-97     send_async() header forwarding
+  app/services/agent_client.py     lines 161-170   send_streaming() header forwarding
+
+
+6. CONNECTION MANAGEMENT
+------------------------
+
+Tracks all active WebSocket connections, enforces capacity limits, and provides
+utilities for targeted messaging and broadcasting.
+
+Capabilities:
+  - Capacity control: max concurrent connections (default 1000). New ones
+    rejected with WebSocket close code 1013.
+  - Connection tracking: each connection gets a UUID, tracks client IP,
+    connected_at, message_count, last_message_at.
+  - Client IP detection: checks X-Forwarded-For header first (for load
+    balancers), falls back to direct client IP.
+  - Targeted send: send_to_connection(connection_id, text) pushes a message
+    to a specific WebSocket by ID.
+  - Broadcast: send to all connections or all subscribers of a topic.
+  - Idle detection: get_idle_connections(timeout) returns connections that have
+    been idle longer than the threshold.
+
+Code:
+  app/core/connection_manager.py   lines 16-40     ConnectionInfo dataclass
+  app/core/connection_manager.py   lines 43-75     __init__, capacity properties
+  app/core/connection_manager.py   lines 80-127    connect()
+  app/core/connection_manager.py   lines 129-148   disconnect()
+  app/core/connection_manager.py   lines 154-159   update_message_count()
+  app/core/connection_manager.py   lines 188-207   send_to_connection()
+  app/core/connection_manager.py   lines 209-237   broadcast()
+  app/core/connection_manager.py   lines 239-248   get_idle_connections()
+  app/core/connection_manager.py   lines 250-265   close_connection()
+  app/core/connection_manager.py   lines 278-289   _get_client_ip()
+
+
+7. SUBPROTOCOL NEGOTIATION
+--------------------------
+
+Reads the client's requested WebSocket subprotocols and selects the first
+supported match.
+
+Supported protocols: circuit.v1, circuit.v2, cdca2a
+(configurable via UA_WS_SUPPORTED_SUBPROTOCOLS)
+
+Code:
+  app/api/websocket.py   lines 40-65     negotiate_subprotocol()
+  app/api/websocket.py   lines 230-241   Called during connection accept
+  app/config.py          lines 31-34     supported_subprotocols setting
+
+
+8. IDLE CONNECTION TIMEOUT
+--------------------------
+
+Background task that periodically closes WebSocket connections that have been
+idle too long.
+
+Behavior:
+  - Runs every timeout/6 seconds (minimum 30s)
+  - Scans all connections for those idle longer than
+    connection_idle_timeout_seconds (default 30 minutes)
+  - Closes idle connections with WebSocket code 1000 and reason "Idle timeout"
+
+Code:
+  app/main.py                      lines 57-82     _sweep_idle_connections() task
+  app/main.py                      lines 104-106   Task created at startup
+  app/core/connection_manager.py   lines 239-248   get_idle_connections()
+  app/core/connection_manager.py   lines 250-265   close_connection()
+  app/config.py                    lines 149-153   connection_idle_timeout_seconds
+
+
+9. ASYNC REQUEST TIMEOUT (CORRELATION SWEEP)
+--------------------------------------------
+
+Background task that sends timeout errors to the UI for orchestrator requests
+that never received a response.
+
+Behavior:
+  - Runs every timeout/4 seconds
+  - Scans the correlation store for requests older than
+    async_response_timeout_seconds (default 30 minutes)
+  - Sends a JSON-RPC error to the UI for each timed-out request:
+    {"jsonrpc":"2.0","id":"<request_id>","error":{"code":-32408,"message":"Request timed out waiting for orchestrator response","data":{"timeoutSeconds":1800}}}
+
+Code:
+  app/main.py                    lines 17-54     _sweep_expired_requests() task
+  app/main.py                    lines 101-103   Task created at startup
+  app/core/correlation_store.py  lines 85-93     CorrelationStore.get_expired()
+  app/core/correlation_store.py  lines 174-193   RedisCorrelationStore.get_expired()
+  app/config.py                  lines 142-146   async_response_timeout_seconds
+
+
+10. WEBHOOK FALLBACK PATH
+--------------------------
+
+HTTP POST endpoint that receives async responses from the orchestrator when
+SSE streaming is not used.
+
+Endpoint: POST /ciscoua/api/v1/ws/async/response
+
+Behavior:
+  - Accepts both wrapped {"body":{"requestId":...}} and unwrapped
+    {"requestId":...} formats
+  - Uses non-destructive get() on the correlation store (allows multiple
+    webhook responses for the same requestId)
+  - Returns 200 on success, 400 if missing requestId, 503 on delivery failure
+    (so orchestrator retries)
+
+Code:
+  app/api/webhooks.py              lines 28-76     _handle_async_response()
+  app/api/webhooks.py              lines 79-126    webhook_async_response() endpoint
+  app/models/webhook_requests.py                   Request models
+
+
+11. PROTOCOL-LEVEL KEEPALIVE (PING/PONG)
+-----------------------------------------
+
+Configured at the Uvicorn worker level to keep connections alive through load
+balancers and proxies.
+
+  ws_ping_interval  20 seconds  Server sends a WebSocket ping every 20s
+  ws_ping_timeout   30 seconds  Closes connection if no pong within 30s
+
+Uses uvloop + httptools for high performance.
+
+Code:
+  app/worker.py   lines 8-15   CustomUvicornWorker config
+
+
+12. GRACEFUL DISCONNECT CLEANUP
+--------------------------------
+
+When a WebSocket disconnects (normally or abnormally), the server cleans up all
+associated resources.
+
+Cleanup actions:
+  1. Removes all orphaned correlation store entries for the connection
+  2. Disconnects from the connection manager (logs duration, message count)
+  3. Clears structlog logging context
+
+Code:
+  app/api/websocket.py           lines 189-198    finally block -- cleanup
+  app/core/correlation_store.py  lines 75-83      CorrelationStore.remove_by_connection()
+  app/core/correlation_store.py  lines 154-172    RedisCorrelationStore.remove_by_connection()
+
+
+13. ERROR HANDLING
+------------------
+
+Multiple layers of error handling from WebSocket-level down to message-level.
+
+  Layer       Error                     Response
+  WebSocket   Unexpected exception      INTERNAL_ERROR response, then close
+  WebSocket   Clean disconnect          Logged, resources cleaned
+  Message     JSON parse failure        Treated as plain text A2A query
+  Message     Pydantic validation       Structured error with field-level details
+  Session     Expired or unknown        -32000: "Session expired or not found"
+  A2A         Empty query text          -32602: "Missing or empty query"
+  Rate limit  Bucket exhausted          -32429: "Rate limit exceeded" + retryAfterMs
+  Timeout     Orchestrator no response  -32408: "Request timed out"
+
+Code:
+  app/api/websocket.py             lines 170-174   WebSocketDisconnect handler
+  app/api/websocket.py             lines 175-188   Generic exception handler
+  app/services/message_handler.py  lines 86-94     JSON parse failure fallback
+  app/services/message_handler.py  lines 109-120   Pydantic validation error
+  app/services/message_handler.py  lines 314-329   Session expired error
+  app/services/message_handler.py  lines 299-312   Empty query error
+
+
+14. REQUEST TYPE ROUTING
+------------------------
+
+The UI sends a requestType field in params.metadata to control what the server
+does. This replaces the old isFirstChat boolean.
+
+  requestType         What happens
+  "welcome"           Creates a new session, returns welcome message (no orch call)
+  "extend_session"    Resets created_at to now, extends to full 8 hours
+  "end_session"       Deletes the session from Redis/memory
+  null / omitted      Normal query -- forwarded to orchestrator or canned response
+
+Welcome message content:
+  Welcome {user_name}! I am Cisco Uber Assistant. How can I help you today?
+  Book a demo or trial
+  Chat with Sales
+  Get Support
+  Licensing
+  Get Cisco Certified
+  Velocity Hub
+
+  (UI replaces {user_name} with the actual user name)
+
+Code:
+  app/services/message_handler.py  lines 230-297   requestType if-elif chain
+  app/services/a2a_handler.py      lines 16-22     WELCOME_MESSAGE_FIRST_CHAT constant
+  app/services/a2a_handler.py      lines 323-364   build_welcome_response()
+  app/services/a2a_handler.py      lines 365-400   build_extend_session_response()
+  app/services/a2a_handler.py      lines 402-430   build_end_session_response()
+  app/core/session_store.py        renew_session()  Resets created_at + full 8hr window
+  app/core/session_store.py        delete_session() Removes session entirely
+
+
+15. SSE STREAM PROCESSING
+--------------------------
+
+Parses Server-Sent Events from the orchestrator's streaming response and
+accumulates the final text.
+
+SSE event types handled:
+  status-update    Intermediate progress (e.g. "Processing...")
+  artifact-update  Partial content delivery
+  task             Final complete response with status + artifacts
+
+Behavior:
+  - Accumulates text across events
+  - Avoids duplication on the final event (only appends if not already
+    received content)
+  - Skips intermediate streaming frames -- only the final accumulated
+    response is sent to the UI
+
+Code:
+  app/services/a2a_handler.py      lines 432-477   extract_text_from_sse_event()
+  app/services/message_handler.py  lines 371-391   Streaming loop -- accumulates text
+  app/services/message_handler.py  lines 393-414   Final response build + send
+  app/services/agent_client.py     lines 172-183   send_streaming() SSE line parsing
+
+
+16. STRUCTURED LOGGING
+----------------------
+
+Uses structlog with bound context for structured, searchable log events.
+
+Context fields bound per connection:
+  connection_id   Connection established
+  client_ip       Connection established
+  subprotocol     Connection established
+  message_type    Each message processed
+  correlation_id  Each message processed
+  session_id      Each message processed
+  component       Each service class init
+
+Key log events:
+  ws_headers_extracted                 websocket        Headers captured at connect
+  session_created                      session_store    New session created
+  session_renewed                      session_store    Session renewed (extend_session)
+  session_deleted                      session_store    Session deleted (end_session)
+  session_ttl_extended                 session_store    Session expiry slid forward
+  request_type_welcome                 message_handler  Welcome message returned
+  request_type_extend_session          message_handler  Session extended
+  request_type_end_session             message_handler  Session ended
+  forwarding_headers_to_orchestrator   agent_client     Headers being sent to orch
+  rate_limit_exceeded                  websocket        Message throttled
+  closing_idle_connection              idle_sweep       Idle connection being closed
+  correlation_entry_expired            correlation_sweep Orchestrator request timed out
+
+Code:
+  app/logging/setup.py   setup_logging(), get_logger(), bind_connection_context(),
+                         bind_message_context()
+
+
+17. CONFIGURATION REFERENCE
+----------------------------
+
+All settings loaded from environment variables prefixed with UA_WS_.
+
+  Setting                                Default    Description
+  UA_WS_HOST                             0.0.0.0    Server bind host
+  UA_WS_PORT                             8000       Server bind port
+  UA_WS_ENVIRONMENT                      development  development or production
+  UA_WS_MAX_CONNECTIONS                  1000       Max concurrent WS connections
+  UA_WS_SUPPORTED_SUBPROTOCOLS           circuit.v1,circuit.v2,cdca2a
+  UA_WS_SESSION_IDLE_TTL_SECONDS         1800       Session idle timeout (30 min)
+  UA_WS_SESSION_MAX_LIFETIME_SECONDS     28800      Session max lifetime (8 hours)
+  UA_WS_SESSION_PERSISTENCE_BACKEND      memory     memory or redis
+  UA_WS_REDIS_HOST                       localhost  Redis host
+  UA_WS_REDIS_PORT                       6379       Redis port
+  UA_WS_REDIS_DB                         0          Redis database number
+  UA_WS_ASYNC_FLOW_ENABLED              false      Enable orchestrator forwarding
+  UA_WS_AGENT_BASE_URL                  http://...orchestration-agent-svc:8006
+  UA_WS_RATE_LIMIT_MESSAGES_PER_MINUTE  10         Rate limit per connection
+  UA_WS_RATE_LIMIT_BURST_SIZE           5          Burst allowance
+  UA_WS_CONNECTION_IDLE_TIMEOUT_SECONDS 1800       Close idle connections (30 min)
+  UA_WS_ASYNC_RESPONSE_TIMEOUT_SECONDS  1800       Timeout for orchestrator (30 min)
+  UA_WS_HEARTBEAT_INTERVAL_SECONDS      20         Ping interval
+  UA_WS_HEARTBEAT_TIMEOUT_SECONDS       10         Pong timeout
+  UA_WS_LOG_LEVEL                       INFO       Logging level
+
+File: app/config.py (full settings class)
