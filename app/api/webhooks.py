@@ -7,8 +7,10 @@ from fastapi.responses import JSONResponse
 
 from app.core.connection_manager import ConnectionManager
 from app.core.correlation_store import CorrelationStore, RedisCorrelationStore
+from app.core.session_store import InMemorySessionStore, RedisSessionStore
 from app.dependencies.providers import (
     ConnectionManagerDep,
+    SessionStoreDep,
     get_a2a_handler,
     get_correlation_store,
 )
@@ -31,6 +33,7 @@ async def _handle_async_response(
     correlation_store: CorrelationStore | RedisCorrelationStore,
     connection_manager: ConnectionManager,
     a2a_handler: A2AHandler,
+    session_store: InMemorySessionStore | RedisSessionStore,
 ) -> tuple[bool, str]:
     """
     Look up connection by requestId, build rich UI response, send to WebSocket.
@@ -52,6 +55,13 @@ async def _handle_async_response(
     referrer = inner.referrer or record.referrer
     query_text = record.query_text
 
+    session_expires_at = None
+    if session_id:
+        await session_store.extend_ttl(session_id)
+        session = await session_store.get(session_id)
+        if session:
+            session_expires_at = session.expires_at
+
     ui_response = a2a_handler.build_a2a_response_from_content(
         content=inner.content,
         session_id=session_id,
@@ -61,6 +71,7 @@ async def _handle_async_response(
         cp_gutc_id=cp_gutc_id,
         referrer=referrer,
         query_text=query_text,
+        session_expires_at=session_expires_at,
     )
     response_json = ui_response.model_dump_json(by_alias=True)
 
@@ -72,6 +83,8 @@ async def _handle_async_response(
         "async_response_delivered",
         request_id=request_id,
         connection_id=record.connection_id,
+        session_id=session_id,
+        session_expires_at=session_expires_at.isoformat() if session_expires_at else None,
     )
     return True, ""
 
@@ -82,6 +95,7 @@ async def webhook_async_response(
     correlation_store: Annotated[CorrelationStore | RedisCorrelationStore, Depends(get_correlation_store_dep)],
     connection_manager: ConnectionManagerDep,
     a2a_handler: Annotated[A2AHandler, Depends(get_a2a_handler)],
+    session_store: SessionStoreDep,
 ) -> JSONResponse:
     """
     Receive async response from the orchestrator.
@@ -117,6 +131,7 @@ async def webhook_async_response(
         correlation_store=correlation_store,
         connection_manager=connection_manager,
         a2a_handler=a2a_handler,
+        session_store=session_store,
     )
     if success:
         return JSONResponse(status_code=200, content={"status": "delivered"})
