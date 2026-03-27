@@ -135,14 +135,14 @@ class MessageHandler:
         session_id = message.metadata.session_id if message.metadata.session_id else None
         if session_id and session_id.strip():
             session_id = session_id.strip()
-            if await self._session_store.get(session_id) is None:
+            ttl_result = await self._session_store.extend_ttl(session_id)
+            if ttl_result == "expired":
                 self._logger.info("session_expired_or_unknown", session_id=session_id)
                 return self._router.create_error_response(
                     code=ErrorCode.SESSION_EXPIRED,
                     message="Session expired or not found. Start a new session.",
                     correlation_id=message.metadata.correlation_id,
                 )
-            await self._session_store.extend_ttl(session_id)
         else:
             session_id = await self._session_store.create()
 
@@ -223,8 +223,11 @@ class MessageHandler:
         referrer = extracted.referrer or ""
         request_type = extracted.request_type
         message_id = extracted.message_id or str(uuid.uuid4())
-        user_id = extracted.user_id
-        email = extracted.email
+        user_access_level = extracted.user_access_level
+        region = extracted.region
+        country = extracted.country
+        language = extracted.language
+        locale = extracted.locale
         response_id = a2a_request.id if a2a_request.id is not None else None
 
         # ── requestType-based routing (welcome / extend_session / end_session) ──
@@ -327,7 +330,8 @@ class MessageHandler:
             )
 
         if session_id:
-            if await self._session_store.get(session_id) is None:
+            ttl_result = await self._session_store.extend_ttl(session_id)
+            if ttl_result == "expired":
                 bind_message_context(
                     message_type="a2a",
                     correlation_id=str(response_id) if response_id is not None else None,
@@ -337,12 +341,11 @@ class MessageHandler:
                 return A2AErrorResponse(
                     jsonrpc="2.0",
                     error=A2AErrorDetail(
-                        code=-32000,
+                        code=-32404,
                         message="Session expired or not found. Start a new session.",
                     ),
                     id=response_id,
                 )
-            await self._session_store.extend_ttl(session_id)
         else:
             session_id = await self._session_store.create(
                 user_token=user_token,
@@ -394,11 +397,14 @@ class MessageHandler:
                 message_id=message_id,
                 cp_gutc_id=cp_gutc_id,
                 referrer=referrer,
-                user_id=user_id,
-                email=email,
                 user_token=user_token,
                 email_address=email_address,
                 ccoid=ccoid,
+                user_access_level=user_access_level,
+                region=region,
+                country=country,
+                language=language,
+                locale=locale,
             ):
                 text, state, is_final = self._a2a_handler.extract_text_from_sse_event(event)
                 if text and not (is_final and got_content):
@@ -406,6 +412,10 @@ class MessageHandler:
                     got_content = True
 
             if got_content:
+                await self._session_store.extend_ttl(session_id)
+                session = await self._session_store.get(session_id)
+                session_expires_at = session.expires_at if session else session_expires_at
+
                 final_resp = self._a2a_handler.build_a2a_response_from_content(
                     content=accumulated_text,
                     session_id=session_id,

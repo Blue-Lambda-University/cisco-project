@@ -15,7 +15,7 @@ class SessionStore(Protocol):
 
     async def get(self, session_id: str, now: datetime | None = None) -> "Session | None": ...
     async def create(self, now: datetime | None = None, user_token: str = "", email_address: str = "", ccoid: str = "") -> str: ...
-    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> bool: ...
+    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> str: ...
     async def renew_session(self, session_id: str, now: datetime | None = None) -> "Session | None": ...
     async def delete_session(self, session_id: str) -> bool: ...
     def get_stats(self) -> dict[str, Any]: ...
@@ -53,9 +53,11 @@ class InMemorySessionStore:
         self,
         idle_ttl_seconds: int = 1800,
         max_lifetime_seconds: int | None = 86400,
+        renewal_idle_threshold_seconds: int = 900,
     ) -> None:
         self._idle_ttl_seconds = idle_ttl_seconds
         self._max_lifetime_seconds = max_lifetime_seconds
+        self._renewal_idle_threshold_seconds = renewal_idle_threshold_seconds
         self._sessions: dict[str, Session] = {}
         self._conversation_map: dict[str, str] = {}
         self._logger = logger.bind(component="session_store")
@@ -100,12 +102,27 @@ class InMemorySessionStore:
         )
         return session_id
 
-    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> bool:
+    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> str:
         session = await self.get(session_id, now=now)
         if session is None:
-            return False
+            return "expired"
         if now is None:
             now = datetime.utcnow()
+
+        if self._max_lifetime_seconds is not None:
+            max_expires = session.created_at + timedelta(seconds=self._max_lifetime_seconds)
+            remaining = (max_expires - now).total_seconds()
+            idle_duration = (now - session.last_activity_at).total_seconds() if session.last_activity_at else 0
+
+            if remaining < self._idle_ttl_seconds and idle_duration > self._renewal_idle_threshold_seconds:
+                self._logger.info(
+                    "session_early_expiry_renewal_zone",
+                    session_id=session_id,
+                    remaining_seconds=round(remaining),
+                    idle_seconds=round(idle_duration),
+                )
+                return "expired"
+
         new_expires = now + timedelta(seconds=self._idle_ttl_seconds)
         if self._max_lifetime_seconds is not None:
             max_expires = session.created_at + timedelta(seconds=self._max_lifetime_seconds)
@@ -118,7 +135,7 @@ class InMemorySessionStore:
             session_id=session_id,
             expires_at=new_expires.isoformat(),
         )
-        return True
+        return "extended"
 
     async def renew_session(self, session_id: str, now: datetime | None = None) -> Session | None:
         """Reset created_at to now and set expires_at to a full new max lifetime window."""
@@ -189,10 +206,12 @@ class RedisSessionStore:
         redis_url: str,
         idle_ttl_seconds: int = 1800,
         max_lifetime_seconds: int | None = 86400,
+        renewal_idle_threshold_seconds: int = 900,
     ) -> None:
         self._redis_url = redis_url
         self._idle_ttl_seconds = idle_ttl_seconds
         self._max_lifetime_seconds = max_lifetime_seconds
+        self._renewal_idle_threshold_seconds = renewal_idle_threshold_seconds
         self._client = None
         self._logger = logger.bind(component="redis_session_store")
 
@@ -281,13 +300,31 @@ class RedisSessionStore:
         )
         return session_id
 
-    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> bool:
-        """Extend the session's expiry by idle_ttl from now; respect max_lifetime_seconds."""
+    async def extend_ttl(self, session_id: str, now: datetime | None = None) -> str:
+        """Extend the session's expiry by idle_ttl from now; respect max_lifetime_seconds.
+
+        Returns 'extended' on success, 'expired' if session not found or early expiry triggered.
+        """
         session = await self.get(session_id, now=now)
         if session is None:
-            return False
+            return "expired"
         if now is None:
             now = datetime.utcnow()
+
+        if self._max_lifetime_seconds is not None:
+            max_expires = session.created_at + timedelta(seconds=self._max_lifetime_seconds)
+            remaining = (max_expires - now).total_seconds()
+            idle_duration = (now - session.last_activity_at).total_seconds() if session.last_activity_at else 0
+
+            if remaining < self._idle_ttl_seconds and idle_duration > self._renewal_idle_threshold_seconds:
+                self._logger.info(
+                    "session_early_expiry_renewal_zone",
+                    session_id=session_id,
+                    remaining_seconds=round(remaining),
+                    idle_seconds=round(idle_duration),
+                )
+                return "expired"
+
         new_expires = now + timedelta(seconds=self._idle_ttl_seconds)
         if self._max_lifetime_seconds is not None:
             max_expires = session.created_at + timedelta(seconds=self._max_lifetime_seconds)
@@ -306,7 +343,7 @@ class RedisSessionStore:
             session_id=session_id,
             expires_at=new_expires.isoformat(),
         )
-        return True
+        return "extended"
 
     async def renew_session(self, session_id: str, now: datetime | None = None) -> Session | None:
         """Reset created_at to now and set expires_at to a full new max lifetime window."""

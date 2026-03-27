@@ -20,13 +20,16 @@ from pydantic import BaseModel, Field
 class OutgoingMessageMetadata(BaseModel):
     """Metadata embedded inside params.message for the orchestrator (snake_case keys)."""
 
-    user_id: str | None = Field(default=None)
-    email: str | None = Field(default=None)
     conversation_id: str | None = Field(default=None)
     session_id: str | None = Field(default=None)
     request_id: str | None = Field(default=None)
     cp_gutc_id: str | None = Field(default=None)
     referrer: str | None = Field(default=None)
+    user_access_level: str | None = Field(default=None)
+    region: str | None = Field(default=None)
+    country: str | None = Field(default=None)
+    language: str | None = Field(default=None)
+    locale: str | None = Field(default=None)
 
 
 class OutgoingMessage(BaseModel):

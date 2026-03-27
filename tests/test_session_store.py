@@ -31,47 +31,54 @@ class TestSession:
 class TestInMemorySessionStore:
     """Tests for InMemorySessionStore."""
 
-    def test_create_returns_id(self):
+    @pytest.mark.asyncio
+    async def test_create_returns_id(self):
         """create() returns a non-empty session ID (no prefix)."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        sid = store.create()
+        sid = await store.create()
         assert sid is not None
         assert len(sid) > 10
 
-    def test_get_returns_created_session(self):
+    @pytest.mark.asyncio
+    async def test_get_returns_created_session(self):
         """get() returns a session right after create()."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        sid = store.create()
-        session = store.get(sid)
+        sid = await store.create()
+        session = await store.get(sid)
         assert session is not None
         assert session.session_id == sid
 
-    def test_get_returns_none_for_unknown(self):
+    @pytest.mark.asyncio
+    async def test_get_returns_none_for_unknown(self):
         """get() returns None for unknown session ID."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        assert store.get("unknown-id") is None
+        assert await store.get("unknown-id") is None
 
-    def test_extend_ttl_updates_expiry(self):
-        """extend_ttl() updates expires_at."""
+    @pytest.mark.asyncio
+    async def test_extend_ttl_updates_expiry(self):
+        """extend_ttl() returns 'extended' and updates expires_at."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        sid = store.create()
-        session_before = store.get(sid)
+        sid = await store.create()
+        session_before = await store.get(sid)
         assert session_before is not None
-        store.extend_ttl(sid)
-        session_after = store.get(sid)
+        result = await store.extend_ttl(sid)
+        assert result == "extended"
+        session_after = await store.get(sid)
         assert session_after is not None
         assert session_after.expires_at >= session_before.expires_at
 
-    def test_extend_ttl_returns_false_for_unknown(self):
-        """extend_ttl() returns False for unknown session."""
+    @pytest.mark.asyncio
+    async def test_extend_ttl_returns_expired_for_unknown(self):
+        """extend_ttl() returns 'expired' for unknown session."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        assert store.extend_ttl("unknown-id") is False
+        assert await store.extend_ttl("unknown-id") == "expired"
 
-    def test_get_stats(self):
+    @pytest.mark.asyncio
+    async def test_get_stats(self):
         """get_stats() returns total and active counts."""
         store = InMemorySessionStore(idle_ttl_seconds=60)
-        store.create()
-        store.create()
+        await store.create()
+        await store.create()
         stats = store.get_stats()
         assert stats["total_sessions"] == 2
         assert stats["active_sessions"] == 2
@@ -102,46 +109,46 @@ class TestRedisSessionStore:
             max_lifetime_seconds=3600,
         )
         yield store
-        # Clean up: delete test keys (ws_user_session:* in db 1)
-        try:
-            client = store._get_client()
-            for key in client.scan_iter(f"{REDIS_SESSION_KEY_PREFIX}*", count=100):
-                client.delete(key)
-        except Exception:
-            pass
 
-    def test_create_returns_id(self, redis_store):
+    @pytest.mark.asyncio
+    async def test_create_returns_id(self, redis_store):
         """create() returns a non-empty session ID (no prefix)."""
-        sid = redis_store.create()
+        sid = await redis_store.create()
         assert sid is not None
         assert len(sid) > 10
 
-    def test_get_returns_created_session(self, redis_store):
+    @pytest.mark.asyncio
+    async def test_get_returns_created_session(self, redis_store):
         """get() returns a session right after create()."""
-        sid = redis_store.create()
-        session = redis_store.get(sid)
+        sid = await redis_store.create()
+        session = await redis_store.get(sid)
         assert session is not None
         assert session.session_id == sid
 
-    def test_get_returns_none_for_unknown(self, redis_store):
+    @pytest.mark.asyncio
+    async def test_get_returns_none_for_unknown(self, redis_store):
         """get() returns None for unknown session ID."""
-        assert redis_store.get("unknown-id-not-in-redis") is None
+        assert await redis_store.get("unknown-id-not-in-redis") is None
 
-    def test_extend_ttl_updates_expiry(self, redis_store):
-        """extend_ttl() updates expires_at."""
-        sid = redis_store.create()
-        session_before = redis_store.get(sid)
+    @pytest.mark.asyncio
+    async def test_extend_ttl_updates_expiry(self, redis_store):
+        """extend_ttl() returns 'extended' and updates expires_at."""
+        sid = await redis_store.create()
+        session_before = await redis_store.get(sid)
         assert session_before is not None
-        redis_store.extend_ttl(sid)
-        session_after = redis_store.get(sid)
+        result = await redis_store.extend_ttl(sid)
+        assert result == "extended"
+        session_after = await redis_store.get(sid)
         assert session_after is not None
         assert session_after.expires_at >= session_before.expires_at
 
-    def test_extend_ttl_returns_false_for_unknown(self, redis_store):
-        """extend_ttl() returns False for unknown session."""
-        assert redis_store.extend_ttl("unknown-id") is False
+    @pytest.mark.asyncio
+    async def test_extend_ttl_returns_expired_for_unknown(self, redis_store):
+        """extend_ttl() returns 'expired' for unknown session."""
+        assert await redis_store.extend_ttl("unknown-id") == "expired"
 
-    def test_get_stats_returns_backend(self, redis_store):
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_backend(self, redis_store):
         """get_stats() returns dict with backend key."""
         stats = redis_store.get_stats()
         assert stats["backend"] == "redis"

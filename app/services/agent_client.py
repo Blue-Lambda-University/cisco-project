@@ -50,24 +50,30 @@ class AgentClient:
         message_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-        user_id: str | None = None,
-        email: str | None = None,
         user_token: str = "",
         email_address: str = "",
         ccoid: str = "",
+        user_access_level: str | None = None,
+        region: str | None = None,
+        country: str | None = None,
+        language: str | None = None,
+        locale: str | None = None,
     ) -> bool:
         """
         Build JSON-RPC 2.0 payload and POST to the orchestrator /a2a/ endpoint.
         Returns True if the orchestrator accepted the request (2xx), False otherwise.
         """
         metadata = OutgoingMessageMetadata(
-            user_id=user_id,
-            email=email,
             conversation_id=conversation_id,
             session_id=session_id,
             request_id=request_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            user_access_level=user_access_level,
+            region=region,
+            country=country,
+            language=language,
+            locale=locale,
         )
         message = OutgoingMessage(
             role="user",
@@ -126,21 +132,27 @@ class AgentClient:
         message_id: str | None = None,
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
-        user_id: str | None = None,
-        email: str | None = None,
         user_token: str = "",
         email_address: str = "",
         ccoid: str = "",
+        user_access_level: str | None = None,
+        region: str | None = None,
+        country: str | None = None,
+        language: str | None = None,
+        locale: str | None = None,
     ) -> AsyncIterator[dict]:
         """POST to orchestrator and yield parsed SSE events as they arrive."""
         metadata = OutgoingMessageMetadata(
-            user_id=user_id,
-            email=email,
             conversation_id=conversation_id,
             session_id=session_id,
             request_id=request_id,
             cp_gutc_id=cp_gutc_id,
             referrer=referrer,
+            user_access_level=user_access_level,
+            region=region,
+            country=country,
+            language=language,
+            locale=locale,
         )
         message = OutgoingMessage(
             role="user",

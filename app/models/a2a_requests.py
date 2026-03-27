@@ -24,15 +24,18 @@ class A2AMessage(BaseModel):
 
 
 class A2ARequestMetadata(BaseModel):
-    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, requestType, userId, email)."""
+    """Metadata inside params (sessionId, conversationId, CP_GUTC_Id, referrer, uaRequestType, context fields)."""
 
     session_id: str | None = Field(default=None, alias="sessionId")
     conversation_id: str | None = Field(default=None, alias="conversationId")
     cp_gutc_id: str | None = Field(default=None, alias="CP_GUTC_Id")
     referrer: str | None = Field(default=None)
-    request_type: str | None = Field(default=None, alias="requestType")
-    user_id: str | None = Field(default=None, alias="userId")
-    email: str | None = Field(default=None)
+    request_type: str | None = Field(default=None, alias="uaRequestType")
+    user_access_level: str | None = Field(default=None, alias="userAccessLevel")
+    region: str | None = Field(default=None)
+    country: str | None = Field(default=None)
+    language: str | None = Field(default=None)
+    locale: str | None = Field(default=None)
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -82,7 +85,8 @@ class A2AExtracted:
 
     __slots__ = (
         "query_text", "request_id", "session_id", "conversation_id",
-        "cp_gutc_id", "referrer", "request_type", "user_id", "email", "message_id",
+        "cp_gutc_id", "referrer", "request_type", "message_id",
+        "user_access_level", "region", "country", "language", "locale",
     )
 
     def __init__(
@@ -94,9 +98,12 @@ class A2AExtracted:
         cp_gutc_id: str | None = None,
         referrer: str | None = None,
         request_type: str | None = None,
-        user_id: str | None = None,
-        email: str | None = None,
         message_id: str | None = None,
+        user_access_level: str | None = None,
+        region: str | None = None,
+        country: str | None = None,
+        language: str | None = None,
+        locale: str | None = None,
     ) -> None:
         self.query_text = query_text
         self.request_id = request_id
@@ -105,9 +112,12 @@ class A2AExtracted:
         self.cp_gutc_id = cp_gutc_id
         self.referrer = referrer
         self.request_type = request_type
-        self.user_id = user_id
-        self.email = email
         self.message_id = message_id
+        self.user_access_level = user_access_level
+        self.region = region
+        self.country = country
+        self.language = language
+        self.locale = locale
 
 
 def extract_a2a_ids_and_query(request: A2ASendMessageRequest) -> A2AExtracted:
@@ -123,8 +133,11 @@ def extract_a2a_ids_and_query(request: A2ASendMessageRequest) -> A2AExtracted:
         result.cp_gutc_id = (meta.cp_gutc_id or "").strip() or None
         result.referrer = (meta.referrer or "").strip() or None
         result.request_type = (meta.request_type or "").strip() or None
-        result.user_id = (meta.user_id or "").strip() or None
-        result.email = (meta.email or "").strip() or None
+        result.user_access_level = (meta.user_access_level or "").strip() or None
+        result.region = (meta.region or "").strip() or None
+        result.country = (meta.country or "").strip() or None
+        result.language = (meta.language or "").strip() or None
+        result.locale = (meta.locale or "").strip() or None
 
     if not result.conversation_id and request.params.message.context_id:
         result.conversation_id = (request.params.message.context_id or "").strip() or None

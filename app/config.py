@@ -86,6 +86,11 @@ class Settings(BaseSettings):
         ge=60,
         description="Max session lifetime in seconds (8h). None to allow unbounded extension."
     )
+    session_renewal_idle_threshold_seconds: int = Field(
+        default=900,
+        ge=60,
+        description="Minimum idle duration (seconds) to trigger early expiry in the renewal zone (default 15 min)."
+    )
 
     # Redis configuration (session persistence)
     redis_host: str = Field(

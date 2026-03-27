@@ -238,11 +238,13 @@ def get_session_store(
                 redis_url=redis_url,
                 idle_ttl_seconds=settings.session_idle_ttl_seconds,
                 max_lifetime_seconds=settings.session_max_lifetime_seconds,
+                renewal_idle_threshold_seconds=settings.session_renewal_idle_threshold_seconds,
             )
         else:
             _session_store = InMemorySessionStore(
                 idle_ttl_seconds=settings.session_idle_ttl_seconds,
                 max_lifetime_seconds=settings.session_max_lifetime_seconds,
+                renewal_idle_threshold_seconds=settings.session_renewal_idle_threshold_seconds,
             )
 
     return _session_store
